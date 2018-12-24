@@ -1,0 +1,78 @@
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(caret)
+library(xgboost)
+library(lubridate)
+library(pROC)
+# --------------------------
+# model to identify outliers
+# --------------------------
+final <- read.csv("Elo/train_final.csv", stringsAsFactors = F)
+final$outlier <- as.numeric(final$target < -5 | final$target > 5)
+ind <- createDataPartition(final$outlier, p = 0.9, list = F)
+train <- final[ind,]
+test <- final[-ind,]
+
+itrain <- xgb.DMatrix(data = as.matrix(select(train, -c(card_id, target, outlier))),
+                      label = as.matrix(train$outlier))
+itest <- xgb.DMatrix(data = as.matrix(select(test, -c(card_id, target, outlier))),
+                      label = as.matrix(test$outlier))
+
+bst.outlier <- xgb.train(data = itrain,
+                 watchlist = list(train = itrain, test = itest),
+                 booster = "gbtree",
+                 objective = "binary:logistic",
+                 eval_metric = "error",
+                 max_depth = 6,
+                 eta = .1,
+                 subsample = 1,
+                 colsample_bytree = 0.8,
+                 num_boost_round = 100,
+                 nrounds = 500,
+                 print_every_n = 10,
+                 verbose = 1,
+                 early_stopping_rounds = 50)
+bst.outlier <- xgb.load("Elo/bst_outlier")
+result <- data.frame(card_id = test$card_id, 
+                     y = test$outlier, 
+                     pred = predict(bst.outlier,itest),
+                     stringsAsFactors = F)
+r <- roc(result$y, result$pred)
+coords(r, "best", ret = "threshold", best.method = "closest.topleft")
+
+result$y_hat <- as.numeric(result$pred >= 0.03934946)
+confusionMatrix(table(result$y_hat, result$y))
+
+
+# --------------------------
+# model on non-outliers only
+# --------------------------
+final <- read.csv("Elo/train_final.csv", stringsAsFactors = F)
+final <- filter(final, target >= -5 & target <= 5)
+train <- sample_frac(final, 0.9)
+test <- anti_join(final, train, by = "card_id")
+rm(final); gc()
+
+itrain <- xgb.DMatrix(
+  data = as.matrix(select(train, -c(card_id,target))), label = as.matrix(train$target))
+itest <- xgb.DMatrix(
+  data = as.matrix(select(test, -c(card_id,target))), label = as.matrix(test$target))
+
+bst <- xgb.train(data = itrain,
+                 watchlist = list(train = itrain, test = itest),
+                 booster = "gbtree",
+                 objective = "reg:linear",
+                 eval_metric = "rmse",
+                 max_depth = 6,
+                 eta = .1,
+                 subsample = 1,
+                 colsample_bytree = 0.8,
+                 num_boost_round = 100,
+                 nrounds = 500,
+                 print_every_n = 10,
+                 verbose = 1,
+                 early_stopping_rounds = 100)
+xgb.save(bst, "Elo/bst2")
+
+
