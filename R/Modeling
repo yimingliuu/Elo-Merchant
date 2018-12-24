@@ -1,0 +1,925 @@
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(caret)
+library(xgboost)
+library(lubridate)
+
+# historical merchant
+##################################################################################### 
+#####################################################################################
+# prep data
+dt <- read.csv("Elo/train.csv", stringsAsFactors = F)
+his.tran <- read.csv("Elo/historical_transactions.csv", stringsAsFactors = F)
+dt <- inner_join(dt, his.tran, by = "card_id")
+rm(his.tran); gc()
+dt <- filter(dt, purchase_amount < 100)
+# dt <- read.csv("Elo/Sample_Data_Hist.csv", stringsAsFactors = F)
+
+# --------------
+# lubridate date
+# --------------
+dt$first_active_month <- ymd(paste(dt$first_active_month, "-01", sep = ""))
+dt$purchase_date <- ymd_hms(dt$purchase_date)
+
+# --------------
+# target
+# --------------
+target <- dt %>% select(card_id,target) %>% distinct()
+
+# -----------
+# active date 
+# -----------
+active.date <- dt %>% group_by(card_id) %>% summarise(active_date = unique(first_active_month),
+                                                      first_purchase_date = min(purchase_date),
+                                                      last_purchase_date = max(purchase_date))
+active.date$days_before_first_use <- with(active.date, as.numeric(abs(difftime(active_date, first_purchase_date, units = "days"))))
+active.date$time_span <- with(active.date, as.numeric(abs(difftime(first_purchase_date, last_purchase_date, units = "days"))))
+active.date$time_span[active.date$time_span < 1] <- 1
+
+# -------
+# feature
+# -------
+feature <- dt %>% group_by(card_id) %>% summarise(feature_1 = unique(feature_1),
+                                                  feature_2 = unique(feature_2),
+                                                  feature_3 = unique(feature_3))
+feature$feature_3 <- feature$feature_3 + 1
+
+# ---------------
+# authorized_flag
+# ---------------
+authorize <- dt %>% group_by(card_id) %>% summarise(authorized_yes_tot = sum(authorized_flag == "Y"),
+                                            authorized_no_tot = sum(authorized_flag == "N"),
+                                            authorized_rate = mean(authorized_flag == "Y"))
+
+# ----------
+# category_1
+# ----------
+category.1 <- dt %>% group_by(card_id) %>% summarise(category_1_yes_tot = sum(category_1 == "Y"),
+                                                     category_1_no_tot = sum(category_1 == "N"),
+                                                     category_1_yes_rate = mean(category_1 == "Y"))
+
+# ----------
+# category_2 
+# ----------
+dt$category_2[is.na(dt$category_2)] <- 0
+category.2 <- dt %>% group_by(card_id) %>% summarise(category_2_0_tot = sum(category_2 == 0),
+                                                     category_2_1_tot = sum(category_2 == 1),
+                                                     category_2_2_tot = sum(category_2 == 2),
+                                                     category_2_3_tot = sum(category_2 == 3),
+                                                     category_2_4_tot = sum(category_2 == 4),
+                                                     category_2_5_tot = sum(category_2 == 5),
+                                                     category_2_0_ratio = mean(category_2 == 0),
+                                                     category_2_1_ratio = mean(category_2 == 1),
+                                                     category_2_2_ratio = mean(category_2 == 2),
+                                                     category_2_3_ratio = mean(category_2 == 3),
+                                                     category_2_4_ratio = mean(category_2 == 4))
+# ----------
+# category_3
+# ----------
+dt$category_3 <- with(dt, case_when(category_3 == "A" ~ 1,
+                                    category_3 == "B" ~ 2,
+                                    category_3 == "C" ~ 3,
+                                    TRUE ~ 0))
+category.3 <- dt %>% group_by(card_id) %>% summarise(category_3_1_tot = sum(category_3 == 1),
+                                                     category_3_2_tot = sum(category_3 == 2),
+                                                     category_3_3_tot = sum(category_3 == 3),
+                                                     category_3_0_tot = sum(category_3 == 0),
+                                                     category_3_1_rate = mean(category_3 == 1),
+                                                     category_3_2_rate = mean(category_3 == 2),
+                                                     category_3_3_rate = mean(category_3 == 3))
+
+category <- left_join(category.1, category.2, by = "card_id")
+category <- left_join(category, category.3, by = "card_id")
+rm(category.1, category.2, category.3)
+gc()
+
+# ---------------
+# purchase_amount
+# ---------------
+dt <- dt %>% mutate(purchase_year = year(purchase_date),
+                    purchase_month = month(purchase_date, label = T),
+                    purchase_week = wday(purchase_date, label = T),
+                    purchase_hour = hour(purchase_date),
+                    purchase_morning = as.numeric(purchase_hour > 5 & purchase_hour <= 10),
+                    purchase_afternoon = as.numeric(purchase_hour > 10 & purchase_hour <= 20),
+                    purchase_night = as.numeric(purchase_hour > 20 & purchase_hour <= 24),
+                    purchase_lateNight = as.numeric(purchase_hour >= 0 & purchase_hour <= 5))
+
+spend.approve <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id) %>%
+  summarise(spend_app_tot = sum(purchase_amount),
+            spend_app_avg = mean(purchase_amount),
+            spend_app_min = min(purchase_amount),
+            spend_app_max = max(purchase_amount))
+
+spend.reject <- dt %>% filter(authorized_flag == "N") %>% group_by(card_id) %>%
+  summarise(spend_rej_tot = sum(purchase_amount),
+            spend_rej_avg = mean(purchase_amount),
+            spend_rej_min = min(purchase_amount),
+            spend_rej_max = max(purchase_amount))
+
+spend <- full_join(spend.approve, spend.reject, by = "card_id")
+spend[is.na(spend)] <- 0
+rm(spend.approve, spend.reject)
+gc()
+
+# year
+spend.year <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_year) %>%
+  summarise(spend_tot = sum(purchase_amount),
+            spend_avg = mean(purchase_amount),
+            spend_min = min(purchase_amount),
+            spend_max = max(purchase_amount))
+
+tot <- dcast(spend.year, card_id ~ purchase_year, value.var = "spend_tot")
+names(tot)[!grepl("card_id",names(tot))] <- paste("spend_tot_", names(tot)[!grepl("card_id",names(tot))], sep = "")
+
+avg <- dcast(spend.year, card_id ~ purchase_year, value.var = "spend_avg")
+names(avg)[!grepl("card_id",names(avg))] <- paste("spend_avg_", names(avg)[!grepl("card_id",names(avg))], sep = "")
+
+min <- dcast(spend.year, card_id ~ purchase_year, value.var = "spend_min")
+names(min)[!grepl("card_id",names(min))] <- paste("spend_min_", names(min)[!grepl("card_id",names(min))], sep = "")
+
+max <- dcast(spend.year, card_id ~ purchase_year, value.var = "spend_max")
+names(max)[!grepl("card_id",names(max))] <- paste("spend_max_", names(max)[!grepl("card_id",names(max))], sep = "")
+
+spend.year <- left_join(tot, avg, by = "card_id")
+spend.year <- left_join(spend.year, min, by = "card_id")
+spend.year <- left_join(spend.year, max, by = "card_id")
+spend.year[is.na(spend.year)] <- 0
+rm(tot,avg,min,max)
+gc()
+
+# month
+spend.month <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_month) %>%
+  summarise(spend_tot = sum(purchase_amount),
+            spend_avg = mean(purchase_amount),
+            spend_min = min(purchase_amount),
+            spend_max = max(purchase_amount))
+
+spend.month.tot <- dcast(spend.month, card_id ~ purchase_month, value.var = "spend_tot")
+names(spend.month.tot)[!grepl("card_id",names(spend.month.tot))] <- paste("spend_tot_", names(spend.month.tot)[!grepl("card_id",names(spend.month.tot))], sep = "")
+
+spend.month.avg <- dcast(spend.month, card_id ~ purchase_month, value.var = "spend_avg")
+names(spend.month.avg)[!grepl("card_id",names(spend.month.avg))] <- paste("spend_avg_", names(spend.month.avg)[!grepl("card_id",names(spend.month.avg))], sep = "")
+
+spend.month.min <- dcast(spend.month, card_id ~ purchase_month, value.var = "spend_min")
+names(spend.month.min)[!grepl("card_id",names(spend.month.min))] <- paste("spend_min_", names(spend.month.min)[!grepl("card_id",names(spend.month.min))], sep = "")
+
+spend.month.max <- dcast(spend.month, card_id ~ purchase_month, value.var = "spend_max")
+names(spend.month.max)[!grepl("card_id",names(spend.month.max))] <- paste("spend_max_", names(spend.month.max)[!grepl("card_id",names(spend.month.max))], sep = "")
+
+spend.month <- left_join(spend.month.tot, spend.month.avg, by = "card_id")
+spend.month <- left_join(spend.month, spend.month.min, by = "card_id")
+spend.month <- left_join(spend.month, spend.month.max, by = "card_id")
+spend.month[is.na(spend.month)] <- 0
+
+rm(spend.month.avg, spend.month.max, spend.month.min, spend.month.tot)
+gc()
+
+# weekday
+spend.week <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_week) %>%
+  summarise(spend_tot = sum(purchase_amount),
+            spend_avg = mean(purchase_amount),
+            spend_min = min(purchase_amount),
+            spend_max = max(purchase_amount))
+
+tot <- dcast(spend.week, card_id ~ purchase_week, value.var = "spend_tot")
+names(tot)[!grepl("card_id",names(tot))] <- paste("spend_tot_", names(tot)[!grepl("card_id",names(tot))], sep = "")
+
+avg <- dcast(spend.week, card_id ~ purchase_week, value.var = "spend_avg")
+names(avg)[!grepl("card_id",names(avg))] <- paste("spend_avg_", names(avg)[!grepl("card_id",names(avg))], sep = "")
+
+min <- dcast(spend.week, card_id ~ purchase_week, value.var = "spend_min")
+names(min)[!grepl("card_id",names(min))] <- paste("spend_min_", names(min)[!grepl("card_id",names(min))], sep = "")
+
+max <- dcast(spend.week, card_id ~ purchase_week, value.var = "spend_max")
+names(max)[!grepl("card_id",names(max))] <- paste("spend_max_", names(max)[!grepl("card_id",names(max))], sep = "")
+
+spend.week <- left_join(tot, avg, by = "card_id")
+spend.week <- left_join(spend.week, min, by = "card_id")
+spend.week <- left_join(spend.week, max, by = "card_id")
+spend.week[is.na(spend.week)] <- 0
+rm(tot,avg,min,max)
+gc()
+
+# daytime
+spend.morning <- dt %>% filter(authorized_flag == "Y") %>% filter(purchase_morning == 1) %>%
+  group_by(card_id) %>% summarise(spend_morning_tot = sum(purchase_amount),
+                                  spend_morning_avg = mean(purchase_amount),
+                                  spend_morning_min = min(purchase_amount),
+                                  spend_morning_max = max(purchase_amount))
+
+spend.afternoon <- dt %>% filter(authorized_flag == "Y") %>% filter(purchase_afternoon == 1) %>%
+  group_by(card_id) %>% summarise(spend_afternoon_tot = sum(purchase_amount),
+                                  spend_afternoon_avg = mean(purchase_amount),
+                                  spend_afternoon_min = min(purchase_amount),
+                                  spend_afternoon_max = max(purchase_amount))
+
+spend.night <- dt %>% filter(authorized_flag == "Y") %>% filter(purchase_night == 1) %>%
+  group_by(card_id) %>% summarise(spend_night_tot = sum(purchase_amount),
+                                  spend_night_avg = mean(purchase_amount),
+                                  spend_night_min = min(purchase_amount),
+                                  spend_night_max = max(purchase_amount))
+
+spend.lateNight <- dt %>% filter(authorized_flag == "Y") %>% filter(purchase_lateNight == 1) %>%
+  group_by(card_id) %>% summarise(spend_lateNight_tot = sum(purchase_amount),
+                                  spend_lateNight_avg = mean(purchase_amount),
+                                  spend_lateNight_min = min(purchase_amount),
+                                  spend_lateNight_max = max(purchase_amount))
+
+spend.dayTime <- left_join(data.frame(card_id = unique(dt$card_id), stringsAsFactors = F),
+                           spend.morning,
+                           by = "card_id")
+spend.dayTime <- left_join(spend.dayTime, spend.afternoon, by = "card_id")
+spend.dayTime <- left_join(spend.dayTime, spend.night, by = "card_id")
+spend.dayTime <- left_join(spend.dayTime, spend.lateNight, by = "card_id")
+spend.dayTime[is.na(spend.dayTime)] <- 0
+
+rm(spend.morning, spend.afternoon, spend.night, spend.lateNight)
+gc()
+
+# join spend
+spend <- left_join(spend, spend.year, by = "card_id")
+spend <- left_join(spend, spend.month, by = "card_id")
+spend <- left_join(spend, spend.week, by = "card_id")
+spend <- left_join(spend, spend.dayTime, by = "card_id")
+
+rm(spend.year, spend.month, spend.week, spend.dayTime)
+gc()
+
+# -------------
+# purchase_date 
+# -------------
+purchase <- dt %>% group_by(card_id) %>% summarise(purchase_tot_all = n())
+
+purchase.year <- dt %>% group_by(card_id,purchase_year) %>% summarise(n = n())
+purchase.year <- dcast(purchase.year, card_id ~ purchase_year, value.var = "n")
+purchase.year[is.na(purchase.year)] <- 0
+purchase.year <- purchase.year %>% mutate(tot = `2017` + `2018`,
+                                          `2017_ratio` = `2017`/tot) %>% select(-tot)
+names(purchase.year)[!grepl("card",names(purchase.year))] <- paste("purchase_",
+                                                                   names(purchase.year)[!grepl("card",names(purchase.year))],
+                                                                   sep = "")
+#
+purchase.month <- dt %>% group_by(card_id,purchase_month) %>% summarise(n = n())
+purchase.month <- dcast(purchase.month, card_id ~ purchase_month, value.var = "n")
+purchase.month[is.na(purchase.month)] <- 0
+purchase.month <- purchase.month %>% mutate(tot = rowSums(select(purchase.month,-card_id)),
+                                            Jan_ratio = Jan/tot,
+                                            Feb_ratio = Feb/tot,
+                                            Mar_ratio = Mar/tot,
+                                            Apr_ratio = Apr/tot,
+                                            May_ratio = May/tot,
+                                            Jun_ratio = Jun/tot,
+                                            Jul_ratio = Jul/tot,
+                                            Aug_ratio = Aug/tot,
+                                            Sep_ratio = Sep/tot,
+                                            Oct_ratio = Oct/tot,
+                                            Nov_ratio = Nov/tot) %>% select(-tot)
+names(purchase.month)[!grepl("card",names(purchase.month))] <- paste("purchase_", 
+                                                                     names(purchase.month)[!grepl("card",names(purchase.month))],
+                                                                     sep = "")
+
+#
+purchase.week <- dt %>% group_by(card_id,purchase_week) %>% summarise(n = n())
+purchase.week <- dcast(purchase.week, card_id ~ purchase_week, value.var = "n")
+purchase.week[is.na(purchase.week)] <- 0
+purchase.week <- purchase.week %>% mutate(tot = rowSums(select(purchase.week,-card_id)),
+                                          Sun_ratio = Sun/tot,
+                                          Mon_ratio = Mon/tot,
+                                          Tue_ratio = Tue/tot,
+                                          Wed_ratio = Wed/tot,
+                                          Thu_ratio = Thu/tot,
+                                          Fri_ratio = Fri/tot)
+names(purchase.week)[!grepl("card",names(purchase.week))] <- paste("purchase_",
+                                                                   names(purchase.week)[!grepl("card",names(purchase.week))],
+                                                                   sep = "")
+
+#
+purchase.morning <- dt %>% group_by(card_id,purchase_morning) %>% summarise(n = n())
+purchase.morning <- dcast(purchase.morning, card_id ~ purchase_morning, value.var = "n") %>% select(-`0`)
+names(purchase.morning)[!grepl("card",names(purchase.morning))] <- "purchase_morning"
+
+#
+purchase.afternoon <- dt %>% group_by(card_id,purchase_afternoon) %>% summarise(n = n())
+purchase.afternoon <- dcast(purchase.afternoon, card_id ~ purchase_afternoon, value.var = "n") %>% select(-`0`)
+names(purchase.afternoon)[!grepl("card",names(purchase.afternoon))] <- "purchase_afternoon"
+
+#
+purchase.night <- dt %>% group_by(card_id,purchase_night) %>% summarise(n = n())
+purchase.night <- dcast(purchase.night, card_id ~ purchase_night, value.var = "n") %>% select(-`0`)
+names(purchase.night)[!grepl("card",names(purchase.night))] <- "purchase_night"
+
+#
+purchase.lateNight <- dt %>% group_by(card_id,purchase_lateNight) %>% summarise(n = n())
+purchase.lateNight <- dcast(purchase.lateNight, card_id ~ purchase_lateNight, value.var = "n") %>% select(-`0`)
+names(purchase.lateNight)[!grepl("card",names(purchase.lateNight))] <- "purchase_lateNight"
+
+purchase.dayTime <- left_join(data.frame(card_id = unique(dt$card_id), stringsAsFactors = F),
+                           purchase.morning,
+                           by = "card_id")
+purchase.dayTime <- left_join(purchase.dayTime, purchase.afternoon, by = "card_id")
+purchase.dayTime <- left_join(purchase.dayTime, purchase.night, by = "card_id")
+purchase.dayTime <- left_join(purchase.dayTime, purchase.lateNight, by = "card_id")
+purchase.dayTime[is.na(purchase.dayTime)] <- 0
+
+rm(purchase.morning, purchase.afternoon, purchase.night, purchase.lateNight)
+gc()
+
+purchase <- left_join(purchase, purchase.year, by = "card_id")
+purchase <- left_join(purchase, purchase.month, by = "card_id")
+purchase <- left_join(purchase, purchase.week, by = "card_id")
+purchase <- left_join(purchase, purchase.dayTime, by = "card_id")
+
+rm(purchase.year, purchase.month, purchase.week, purchase.dayTime)
+gc()
+
+# ------------
+# installments
+# ------------
+dt$installments[dt$installments == -1] <- 0
+dt$installments[dt$installments == 999] <- 0
+installment <- dt %>% group_by(card_id,installments) %>% summarise(n = n())
+installment <- dcast(installment, card_id ~ installments, value.var = "n")
+names(installment)[!grepl("card", names(installment))] <- paste("installment_",
+                                                                names(installment)[!grepl("card", names(installment))],
+                                                                sep = "")
+installment[is.na(installment)] <- 0
+
+# ---------
+# month_lag
+# ---------
+month.lag <- dt %>% group_by(card_id) %>% summarise(month_lag_tot = sum(month_lag),
+                                                    month_lag_avg = mean(month_lag),
+                                                    month_lag_min = min(month_lag),
+                                                    month_lag_max = max(month_lag))
+# -----------
+# merchant_id
+# -----------
+merchant <- dt %>% group_by(card_id) %>% summarise(merchant_tot = n())
+merchant <- left_join(merchant, active.date, by = "card_id") %>% select(-c(first_purchase_date,last_purchase_date,days_before_first_use,active_date))
+merchant$merchant_visit_frequency <- with(merchant, merchant_tot/time_span)
+merchant$time_span <- NULL
+
+merchant.max <- dt %>% group_by(card_id,merchant_id) %>% summarise(n = n()) %>%
+  group_by(card_id) %>% summarise(merchant_max_visit = max(n), tot = sum(n)) %>%
+  mutate(merchant_max_ratio = merchant_max_visit/tot) %>% select(-tot)
+
+merchant.cat.max <- dt %>% group_by(card_id,merchant_category_id) %>% summarise(n = n()) %>%
+  group_by(card_id) %>% summarise(merchant_cat_max_visit = max(n), tot = sum(n)) %>%
+  mutate(merchant_cat_max_ratio = merchant_cat_max_visit/tot) %>% select(-tot)
+
+# ------------
+# subsector_id
+# ------------
+subsector.max <- dt %>% group_by(card_id,subsector_id) %>% summarise(n = n()) %>%
+  group_by(card_id) %>% summarise(subsector_max_visit = max(n), tot = sum(n)) %>%
+  mutate(subsector_max_ratio = subsector_max_visit/tot) %>% select(-tot)
+
+# -------
+# city_id
+# -------
+city.max <- dt %>% group_by(card_id,city_id) %>% summarise(n = n()) %>%
+  group_by(card_id) %>% summarise(city_max_visit = max(n), tot = sum(n)) %>%
+  mutate(city_max_ratio = city_max_visit/tot) %>% select(-tot)
+
+# --------
+# state_id
+# --------
+state.max <- dt %>% group_by(card_id,state_id) %>% summarise(n = n()) %>%
+  group_by(card_id) %>% summarise(state_max_visit = max(n), tot = sum(n)) %>%
+  mutate(state_max_ratio = state_max_visit/tot) %>% select(-tot)
+
+# --------
+# join all
+# --------
+rm(dt); gc()
+
+his <- left_join(target, active.date, by = "card_id")
+his <- left_join(his, authorize, by = "card_id")
+his <- left_join(his, category, by = "card_id")
+his <- left_join(his, city.max, by = "card_id")
+his <- left_join(his, feature, by = "card_id")
+his <- left_join(his, installment, by = "card_id")
+his <- left_join(his, merchant, by = "card_id")
+his <- left_join(his, merchant.max, by = "card_id")
+his <- left_join(his, merchant.cat.max, by = "card_id")
+his <- left_join(his, month.lag, by = "card_id")
+his <- left_join(his, purchase, by = "card_id")
+his <- left_join(his, spend, by = "card_id")
+his <- left_join(his, state.max, by = "card_id")
+his <- left_join(his, subsector.max, by = "card_id")
+
+names(his) <- paste("his_", names(his), sep = "")
+his <- rename(his, target = his_target, 
+                   card_id = his_card_id,
+                   active_date = his_active_date,
+                   days_before_first_use = his_days_before_first_use)
+
+rm(list = setdiff(ls(), c("his","new"))); gc()
+
+
+# new merchant
+##################################################################################### 
+##################################################################################### 
+# prep data
+dt <- read.csv("Elo/train.csv", stringsAsFactors = F)
+new.tran <- read.csv("Elo/new_merchant_transactions.csv", stringsAsFactors = F)
+dt <- inner_join(dt, new.tran, by = "card_id")
+rm(new.tran); gc()
+
+# dt <- read.csv("Elo/Sample_Data_New.csv", stringsAsFactors = F)
+# dt$tot_NA <- apply(dt, 1, function(x) sum(is.na(x)))
+# dt <- filter(dt, tot_NA != 13)
+
+# --------------
+# lubridate date
+# --------------
+dt$first_active_month <- ymd(paste(dt$first_active_month, "-01", sep = ""))
+dt$purchase_date <- ymd_hms(dt$purchase_date)
+
+# -----------
+# active date
+# -----------
+active.date <- dt %>% group_by(card_id) %>% summarise(first_purchase_date = min(purchase_date),
+                                                      last_purchase_date = max(purchase_date))
+active.date$time_span <- with(active.date, as.numeric(abs(difftime(first_purchase_date, last_purchase_date, units = "days"))))
+active.date$time_span[active.date$time_span < 1] <- 1
+
+# -------
+# feature
+# -------
+feature <- dt %>% group_by(card_id) %>% summarise(feature_1 = unique(feature_1),
+                                                  feature_2 = unique(feature_2),
+                                                  feature_3 = unique(feature_3))
+feature$feature_3 <- feature$feature_3 + 1
+# ---------------
+# authorized_flag
+# ---------------
+authorize <- dt %>% group_by(card_id) %>% summarise(authorized_yes_tot = sum(authorized_flag == "Y"),
+                                                    authorized_no_tot = sum(authorized_flag == "N"),
+                                                    authorized_rate = mean(authorized_flag == "Y"))
+# ----------
+# category_1
+# ----------
+category.1 <- dt %>% group_by(card_id) %>% summarise(category_1_yes_tot = sum(category_1 == "Y"),
+                                                     category_1_no_tot = sum(category_1 == "N"),
+                                                     category_1_yes_rate = mean(category_1 == "Y"))
+# ----------
+# category_2
+# ----------
+dt$category_2[is.na(dt$category_2)] <- 0
+category.2 <- dt %>% group_by(card_id) %>% summarise(category_2_0_tot = sum(category_2 == 0),
+                                                     category_2_1_tot = sum(category_2 == 1),
+                                                     category_2_2_tot = sum(category_2 == 2),
+                                                     category_2_3_tot = sum(category_2 == 3),
+                                                     category_2_4_tot = sum(category_2 == 4),
+                                                     category_2_5_tot = sum(category_2 == 5),
+                                                     category_2_0_ratio = mean(category_2 == 0),
+                                                     category_2_1_ratio = mean(category_2 == 1),
+                                                     category_2_2_ratio = mean(category_2 == 2),
+                                                     category_2_3_ratio = mean(category_2 == 3),
+                                                     category_2_4_ratio = mean(category_2 == 4))
+# ----------
+# category_3
+# ----------
+dt$category_3 <- with(dt, case_when(category_3 == "A" ~ 1,
+                                    category_3 == "B" ~ 2,
+                                    category_3 == "C" ~ 3,
+                                    TRUE ~ 0))
+category.3 <- dt %>% group_by(card_id) %>% summarise(category_3_1_tot = sum(category_3 == 1),
+                                                     category_3_2_tot = sum(category_3 == 2),
+                                                     category_3_3_tot = sum(category_3 == 3),
+                                                     category_3_0_tot = sum(category_3 == 0),
+                                                     category_3_1_rate = mean(category_3 == 1),
+                                                     category_3_2_rate = mean(category_3 == 2),
+                                                     category_3_3_rate = mean(category_3 == 3))
+category <- left_join(category.1, category.2, by = "card_id")
+category <- left_join(category, category.3, by = "card_id")
+rm(category.1, category.2, category.3)
+gc()
+
+# ---------------
+# purchase_amount
+# ---------------
+dt <- dt %>% mutate(purchase_year = year(purchase_date),
+                    purchase_month = month(purchase_date, label = T),
+                    purchase_week = wday(purchase_date, label = T),
+                    purchase_hour = hour(purchase_date),
+                    purchase_morning = as.numeric(purchase_hour > 5 & purchase_hour <= 10),
+                    purchase_afternoon = as.numeric(purchase_hour > 10 & purchase_hour <= 20),
+                    purchase_night = as.numeric(purchase_hour > 20 & purchase_hour <= 24),
+                    purchase_lateNight = as.numeric(purchase_hour >= 0 & purchase_hour <= 5))
+
+# approved and rejected spends
+spend.approve <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id) %>%
+  summarise(spend_app_tot = sum(purchase_amount),
+            spend_app_avg = mean(purchase_amount),
+            spend_app_min = min(purchase_amount),
+            spend_app_max = max(purchase_amount))
+
+spend.reject <- dt %>% filter(authorized_flag == "N") %>% group_by(card_id) %>%
+  summarise(spend_rej_tot = sum(purchase_amount),
+            spend_rej_avg = mean(purchase_amount),
+            spend_rej_min = min(purchase_amount),
+            spend_rej_max = max(purchase_amount))
+
+spend <- full_join(spend.approve, spend.reject, by = "card_id")
+spend[is.na(spend)] <- 0
+rm(spend.approve, spend.reject)
+gc()
+
+# year
+spend.year <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_year) %>%
+  summarise(spend_tot = sum(purchase_amount),
+            spend_avg = mean(purchase_amount),
+            spend_min = min(purchase_amount),
+            spend_max = max(purchase_amount))
+
+tot <- dcast(spend.year, card_id ~ purchase_year, value.var = "spend_tot")
+names(tot)[!grepl("card_id",names(tot))] <- paste("spend_tot_", names(tot)[!grepl("card_id",names(tot))], sep = "")
+
+avg <- dcast(spend.year, card_id ~ purchase_year, value.var = "spend_avg")
+names(avg)[!grepl("card_id",names(avg))] <- paste("spend_avg_", names(avg)[!grepl("card_id",names(avg))], sep = "")
+
+min <- dcast(spend.year, card_id ~ purchase_year, value.var = "spend_min")
+names(min)[!grepl("card_id",names(min))] <- paste("spend_min_", names(min)[!grepl("card_id",names(min))], sep = "")
+
+max <- dcast(spend.year, card_id ~ purchase_year, value.var = "spend_max")
+names(max)[!grepl("card_id",names(max))] <- paste("spend_max_", names(max)[!grepl("card_id",names(max))], sep = "")
+
+spend.year <- left_join(tot, avg, by = "card_id")
+spend.year <- left_join(spend.year, min, by = "card_id")
+spend.year <- left_join(spend.year, max, by = "card_id")
+spend.year[is.na(spend.year)] <- 0
+rm(tot,avg,min,max)
+gc()
+
+# month
+spend.month <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_month) %>%
+  summarise(spend_tot = sum(purchase_amount),
+            spend_avg = mean(purchase_amount),
+            spend_min = min(purchase_amount),
+            spend_max = max(purchase_amount))
+
+spend.month.tot <- dcast(spend.month, card_id ~ purchase_month, value.var = "spend_tot")
+names(spend.month.tot)[!grepl("card_id",names(spend.month.tot))] <- paste("spend_tot_", names(spend.month.tot)[!grepl("card_id",names(spend.month.tot))], sep = "")
+
+spend.month.avg <- dcast(spend.month, card_id ~ purchase_month, value.var = "spend_avg")
+names(spend.month.avg)[!grepl("card_id",names(spend.month.avg))] <- paste("spend_avg_", names(spend.month.avg)[!grepl("card_id",names(spend.month.avg))], sep = "")
+
+spend.month.min <- dcast(spend.month, card_id ~ purchase_month, value.var = "spend_min")
+names(spend.month.min)[!grepl("card_id",names(spend.month.min))] <- paste("spend_min_", names(spend.month.min)[!grepl("card_id",names(spend.month.min))], sep = "")
+
+spend.month.max <- dcast(spend.month, card_id ~ purchase_month, value.var = "spend_max")
+names(spend.month.max)[!grepl("card_id",names(spend.month.max))] <- paste("spend_max_", names(spend.month.max)[!grepl("card_id",names(spend.month.max))], sep = "")
+
+spend.month <- left_join(spend.month.tot, spend.month.avg, by = "card_id")
+spend.month <- left_join(spend.month, spend.month.min, by = "card_id")
+spend.month <- left_join(spend.month, spend.month.max, by = "card_id")
+spend.month[is.na(spend.month)] <- 0
+
+rm(spend.month.avg, spend.month.max, spend.month.min, spend.month.tot)
+gc()
+
+# weekday
+spend.week <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_week) %>%
+  summarise(spend_tot = sum(purchase_amount),
+            spend_avg = mean(purchase_amount),
+            spend_min = min(purchase_amount),
+            spend_max = max(purchase_amount))
+
+tot <- dcast(spend.week, card_id ~ purchase_week, value.var = "spend_tot")
+names(tot)[!grepl("card_id",names(tot))] <- paste("spend_tot_", names(tot)[!grepl("card_id",names(tot))], sep = "")
+
+avg <- dcast(spend.week, card_id ~ purchase_week, value.var = "spend_avg")
+names(avg)[!grepl("card_id",names(avg))] <- paste("spend_avg_", names(avg)[!grepl("card_id",names(avg))], sep = "")
+
+min <- dcast(spend.week, card_id ~ purchase_week, value.var = "spend_min")
+names(min)[!grepl("card_id",names(min))] <- paste("spend_min_", names(min)[!grepl("card_id",names(min))], sep = "")
+
+max <- dcast(spend.week, card_id ~ purchase_week, value.var = "spend_max")
+names(max)[!grepl("card_id",names(max))] <- paste("spend_max_", names(max)[!grepl("card_id",names(max))], sep = "")
+
+spend.week <- left_join(tot, avg, by = "card_id")
+spend.week <- left_join(spend.week, min, by = "card_id")
+spend.week <- left_join(spend.week, max, by = "card_id")
+spend.week[is.na(spend.week)] <- 0
+rm(tot,avg,min,max)
+gc()
+
+# daytime
+spend.morning <- dt %>% filter(authorized_flag == "Y") %>% filter(purchase_morning == 1) %>%
+  group_by(card_id) %>% summarise(spend_morning_tot = sum(purchase_amount),
+                                  spend_morning_avg = mean(purchase_amount),
+                                  spend_morning_min = min(purchase_amount),
+                                  spend_morning_max = max(purchase_amount))
+
+spend.afternoon <- dt %>% filter(authorized_flag == "Y") %>% filter(purchase_afternoon == 1) %>%
+  group_by(card_id) %>% summarise(spend_afternoon_tot = sum(purchase_amount),
+                                  spend_afternoon_avg = mean(purchase_amount),
+                                  spend_afternoon_min = min(purchase_amount),
+                                  spend_afternoon_max = max(purchase_amount))
+
+spend.night <- dt %>% filter(authorized_flag == "Y") %>% filter(purchase_night == 1) %>%
+  group_by(card_id) %>% summarise(spend_night_tot = sum(purchase_amount),
+                                  spend_night_avg = mean(purchase_amount),
+                                  spend_night_min = min(purchase_amount),
+                                  spend_night_max = max(purchase_amount))
+
+spend.lateNight <- dt %>% filter(authorized_flag == "Y") %>% filter(purchase_lateNight == 1) %>%
+  group_by(card_id) %>% summarise(spend_lateNight_tot = sum(purchase_amount),
+                                  spend_lateNight_avg = mean(purchase_amount),
+                                  spend_lateNight_min = min(purchase_amount),
+                                  spend_lateNight_max = max(purchase_amount))
+
+spend.dayTime <- left_join(data.frame(card_id = unique(dt$card_id), stringsAsFactors = F),
+                           spend.morning,
+                           by = "card_id")
+spend.dayTime <- left_join(spend.dayTime, spend.afternoon, by = "card_id")
+spend.dayTime <- left_join(spend.dayTime, spend.night, by = "card_id")
+spend.dayTime <- left_join(spend.dayTime, spend.lateNight, by = "card_id")
+spend.dayTime[is.na(spend.dayTime)] <- 0
+
+rm(spend.morning, spend.afternoon, spend.night, spend.lateNight)
+gc()
+
+# join spend
+spend <- left_join(spend, spend.year, by = "card_id")
+spend <- left_join(spend, spend.month, by = "card_id")
+spend <- left_join(spend, spend.week, by = "card_id")
+spend <- left_join(spend, spend.dayTime, by = "card_id")
+spend[is.na(spend)] <- 0
+
+rm(spend.year, spend.month, spend.week, spend.dayTime)
+gc()
+
+# -------------
+# purchase_date
+# -------------
+# all
+purchase <- dt %>% group_by(card_id) %>% summarise(purchase_tot_all = n())
+
+# year
+purchase.year <- dt %>% group_by(card_id,purchase_year) %>% summarise(n = n())
+purchase.year <- dcast(purchase.year, card_id ~ purchase_year, value.var = "n")
+purchase.year[is.na(purchase.year)] <- 0
+purchase.year <- purchase.year %>% mutate(tot = `2017` + `2018`,
+                                          `2017_ratio` = `2017`/tot) %>% select(-tot)
+names(purchase.year)[!grepl("card",names(purchase.year))] <- paste("purchase_",
+                                                                   names(purchase.year)[!grepl("card",names(purchase.year))],
+                                                                   sep = "")
+
+# month
+purchase.month <- dt %>% group_by(card_id,purchase_month) %>% summarise(n = n())
+purchase.month <- dcast(purchase.month, card_id ~ purchase_month, value.var = "n")
+purchase.month[is.na(purchase.month)] <- 0
+purchase.month <- purchase.month %>% mutate(tot = rowSums(select(purchase.month,-card_id)),
+                                            Jan_ratio = Jan/tot,
+                                            Feb_ratio = Feb/tot,
+                                            Mar_ratio = Mar/tot,
+                                            Apr_ratio = Apr/tot,
+                                            May_ratio = May/tot,
+                                            Jun_ratio = Jun/tot,
+                                            Jul_ratio = Jul/tot,
+                                            Aug_ratio = Aug/tot,
+                                            Sep_ratio = Sep/tot,
+                                            Oct_ratio = Oct/tot,
+                                            Nov_ratio = Nov/tot) %>% select(-tot)
+names(purchase.month)[!grepl("card",names(purchase.month))] <- paste("purchase_", 
+                                                                     names(purchase.month)[!grepl("card",names(purchase.month))],
+                                                                     sep = "")
+
+# week day
+purchase.week <- dt %>% group_by(card_id,purchase_week) %>% summarise(n = n())
+purchase.week <- dcast(purchase.week, card_id ~ purchase_week, value.var = "n")
+purchase.week[is.na(purchase.week)] <- 0
+purchase.week <- purchase.week %>% mutate(tot = rowSums(select(purchase.week,-card_id)),
+                                          Sun_ratio = Sun/tot,
+                                          Mon_ratio = Mon/tot,
+                                          Tue_ratio = Tue/tot,
+                                          Wed_ratio = Wed/tot,
+                                          Thu_ratio = Thu/tot,
+                                          Fri_ratio = Fri/tot)
+names(purchase.week)[!grepl("card",names(purchase.week))] <- paste("purchase_",
+                                                                   names(purchase.week)[!grepl("card",names(purchase.week))],
+                                                                   sep = "")
+
+# day time
+purchase.morning <- dt %>% group_by(card_id,purchase_morning) %>% summarise(n = n())
+purchase.morning <- dcast(purchase.morning, card_id ~ purchase_morning, value.var = "n") %>% select(-`0`)
+names(purchase.morning)[!grepl("card",names(purchase.morning))] <- "purchase_morning"
+
+#
+purchase.afternoon <- dt %>% group_by(card_id,purchase_afternoon) %>% summarise(n = n())
+purchase.afternoon <- dcast(purchase.afternoon, card_id ~ purchase_afternoon, value.var = "n") %>% select(-`0`)
+names(purchase.afternoon)[!grepl("card",names(purchase.afternoon))] <- "purchase_afternoon"
+
+#
+purchase.night <- dt %>% group_by(card_id,purchase_night) %>% summarise(n = n())
+purchase.night <- dcast(purchase.night, card_id ~ purchase_night, value.var = "n") %>% select(-`0`)
+names(purchase.night)[!grepl("card",names(purchase.night))] <- "purchase_night"
+
+#
+purchase.lateNight <- dt %>% group_by(card_id,purchase_lateNight) %>% summarise(n = n())
+purchase.lateNight <- dcast(purchase.lateNight, card_id ~ purchase_lateNight, value.var = "n") %>% select(-`0`)
+names(purchase.lateNight)[!grepl("card",names(purchase.lateNight))] <- "purchase_lateNight"
+
+purchase.dayTime <- left_join(data.frame(card_id = unique(dt$card_id), stringsAsFactors = F),
+                              purchase.morning,
+                              by = "card_id")
+purchase.dayTime <- left_join(purchase.dayTime, purchase.afternoon, by = "card_id")
+purchase.dayTime <- left_join(purchase.dayTime, purchase.night, by = "card_id")
+purchase.dayTime <- left_join(purchase.dayTime, purchase.lateNight, by = "card_id")
+purchase.dayTime[is.na(purchase.dayTime)] <- 0
+
+rm(purchase.morning, purchase.afternoon, purchase.night, purchase.lateNight)
+gc()
+
+purchase <- left_join(purchase, purchase.year, by = "card_id")
+purchase <- left_join(purchase, purchase.month, by = "card_id")
+purchase <- left_join(purchase, purchase.week, by = "card_id")
+purchase <- left_join(purchase, purchase.dayTime, by = "card_id")
+
+rm(purchase.year, purchase.month, purchase.week, purchase.dayTime)
+gc()
+
+# ------------
+# installments
+# ------------
+dt$installments[dt$installments == -1] <- 0
+dt$installments[dt$installments == 999] <- 0
+installment <- dt %>% group_by(card_id,installments) %>% summarise(n = n())
+installment <- dcast(installment, card_id ~ installments, value.var = "n")
+names(installment)[!grepl("card", names(installment))] <- paste("installment_",
+                                                                names(installment)[!grepl("card", names(installment))],
+                                                                sep = "")
+installment[is.na(installment)] <- 0
+
+# ---------
+# month_lag
+# ---------
+month.lag <- dt %>% group_by(card_id) %>% summarise(month_lag_tot = sum(month_lag),
+                                                    month_lag_avg = mean(month_lag),
+                                                    month_lag_min = min(month_lag),
+                                                    month_lag_max = max(month_lag))
+
+# -----------
+# merchant_id
+# -----------
+merchant <- dt %>% group_by(card_id) %>% summarise(merchant_tot = n())
+merchant <- left_join(merchant, active.date, by = "card_id") %>% select(-c(first_purchase_date,last_purchase_date))
+merchant$merchant_visit_frequency <- with(merchant, merchant_tot/time_span)
+merchant$time_span <- NULL
+
+merchant.max <- dt %>% group_by(card_id,merchant_id) %>% summarise(n = n()) %>%
+  group_by(card_id) %>% summarise(merchant_max_visit = max(n), tot = sum(n)) %>%
+  mutate(merchant_max_ratio = merchant_max_visit/tot) %>% select(-tot)
+
+merchant.cat.max <- dt %>% group_by(card_id,merchant_category_id) %>% summarise(n = n()) %>%
+  group_by(card_id) %>% summarise(merchant_cat_max_visit = max(n), tot = sum(n)) %>%
+  mutate(merchant_cat_max_ratio = merchant_cat_max_visit/tot) %>% select(-tot)
+
+# ------------
+# subsector_id
+# ------------
+subsector.max <- dt %>% group_by(card_id,subsector_id) %>% summarise(n = n()) %>%
+  group_by(card_id) %>% summarise(subsector_max_visit = max(n), tot = sum(n)) %>%
+  mutate(subsector_max_ratio = subsector_max_visit/tot) %>% select(-tot)
+
+# -------
+# city_id
+# -------
+city.max <- dt %>% group_by(card_id,city_id) %>% summarise(n = n()) %>%
+  group_by(card_id) %>% summarise(city_max_visit = max(n), tot = sum(n)) %>%
+  mutate(city_max_ratio = city_max_visit/tot) %>% select(-tot)
+
+# --------
+# state_id
+# --------
+state.max <- dt %>% group_by(card_id,state_id) %>% summarise(n = n()) %>%
+  group_by(card_id) %>% summarise(state_max_visit = max(n), tot = sum(n)) %>%
+  mutate(state_max_ratio = state_max_visit/tot) %>% select(-tot)
+
+# --------
+# join all
+# --------
+new <- left_join(active.date, authorize, by = "card_id")
+new <- left_join(new, category, by = "card_id")
+new <- left_join(new, city.max, by = "card_id")
+new <- left_join(new, feature, by = "card_id")
+new <- left_join(new, installment, by = "card_id")
+new <- left_join(new, merchant, by = "card_id")
+new <- left_join(new, merchant.max, by = "card_id")
+new <- left_join(new, merchant.cat.max, by = "card_id")
+new <- left_join(new, month.lag, by = "card_id")
+new <- left_join(new, purchase, by = "card_id")
+new <- left_join(new, spend, by = "card_id")
+new <- left_join(new, state.max, by = "card_id")
+new <- left_join(new, subsector.max, by = "card_id")
+
+names(new) <- paste("new_", names(new), sep = "")
+new <- rename(new, card_id = new_card_id)
+
+rm(list = setdiff(ls(), c("new","his")))
+gc()
+
+# join his and new
+#####################################################################################
+#####################################################################################
+final <- left_join(his, new, by = "card_id")
+final$new_first_purchase_date[is.na(final$new_first_purchase_date)] <- final$his_last_purchase_date[is.na(final$new_first_purchase_date)]
+final <- final %>% mutate(days_betwn_his_new = as.numeric(abs(difftime(his_last_purchase_date, new_first_purchase_date, units = "days")))) %>%
+  select(-c(active_date,his_first_purchase_date,his_last_purchase_date,
+            new_first_purchase_date,new_last_purchase_date))
+final[is.na(final)] <- 0
+rm(his, new)
+gc()
+
+
+# modeling
+#####################################################################################
+#####################################################################################
+final <- read.csv("Elo/train_final.csv", stringsAsFactors = F)
+train <- sample_frac(final, 0.8)
+test <- anti_join(final, train, by = "card_id")
+
+itrain <- xgb.DMatrix(
+  data = as.matrix(select(train, -c(card_id,target))), label = as.matrix(train$target))
+itest <- xgb.DMatrix(
+  data = as.matrix(select(test, -c(card_id,target))), label = as.matrix(test$target))
+
+bst <- xgb.train(data = itrain,
+                    watchlist = list(train = itrain, test = itest),
+                    booster = "gbtree",
+                    objective = "reg:linear",
+                    eval_metric = "rmse",
+                    max_depth = 7,
+                    eta = 0.01,
+                    subsample = 0.8,
+                    colsample_bytree = 0.8,
+                    min_child_weight = 10,
+                    alpha = 0,
+                    lambda = 0.1,
+                    print_every_n = 10,
+                    verbose = 1,
+                    early_stopping_rounds = 100)
+
+# xgb.save(bst, "Elo/bst1")
+result <- data.frame(card_id = test$card_id, y = test$target, y_hat = predict(bst,itest), stringsAsFactors = F)
+result$residual <- with(result, y - y_hat)
+
+ggplot(result, aes(y)) + geom_density(fill = "lightblue") + 
+  geom_density(data = result, aes(y_hat), fill = "tomato", alpha = 0.7)
+qplot(result$residual, geom = "density", fill = I("gold"), alpha = 0.7)
+
+# ------------------
+# 
+# ------------------
+
+
+
+
+
+# ------------------
+# variable selection
+# ------------------
+final <- read.csv("Elo/train_final.csv", stringsAsFactors = F)
+train <- sample_frac(final, 0.8)
+test <- anti_join(final, train, by = "card_id")
+rm(final); gc()
+bst <- xgb.load("Elo/bst1")
+imp <- xgb.importance(feature_names = colnames(select(train,select = -c(card_id,target))), model = bst)
+imp.var <- head(imp$Feature, 30)
+
+itrain <- xgb.DMatrix(
+  data = as.matrix(select(train, imp.var)), label = as.matrix(train$target))
+itest <- xgb.DMatrix(
+  data = as.matrix(select(test, imp.var)), label = as.matrix(test$target))
+
+bst <- xgb.train(data = itrain,
+                    watchlist = list(train = itrain, test = itest),
+                    booster = "gbtree",
+                    objective = "reg:linear",
+                    eval_metric = "rmse",
+                    max_depth = 6,
+                    eta = .1,
+                    subsample = 1,
+                    colsample_bytree = 0.8,
+                    num_boost_round = 100,
+                    nrounds = 1000,
+                    print_every_n = 10,
+                    verbose = 1,
+                    early_stopping_rounds = 100)
+
+rm(list = setdiff(ls(), c("iboost","imp.var")))
+gc()
+
+
+
+
+
+
+
+
+
