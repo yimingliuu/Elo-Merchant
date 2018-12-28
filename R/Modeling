@@ -15,12 +15,279 @@ dt <- inner_join(dt, his.tran, by = "card_id")
 rm(his.tran); gc()
 dt <- filter(dt, purchase_amount < 100)
 # dt <- read.csv("Elo/Sample_Data_Hist.csv", stringsAsFactors = F)
+m <- read.csv("Elo/merchants.csv", stringsAsFactors = F)
+m <- select(m, -c(city_id,category_1,merchant_category_id,category_2,state_id,
+                  subsector_id,merchant_group_id))
+m <- unique(m)
+m[is.na(m)] <- 0
+dt <- inner_join(dt, m, by = "merchant_id")
+rm(m); gc()
 
 # --------------
 # lubridate date
 # --------------
 dt$first_active_month <- ymd(paste(dt$first_active_month, "-01", sep = ""))
 dt$purchase_date <- ymd_hms(dt$purchase_date)
+
+# ------------------------
+# numerical_1, numerical_2
+# ------------------------
+num.1 <- dt %>% group_by(card_id) %>% summarise(num_1_tot = sum(numerical_1),
+                                                num_1_avg = mean(numerical_1),
+                                                num_1_min = min(numerical_1),
+                                                num_1_max = max(numerical_1))
+num.2 <- dt %>% group_by(card_id) %>% summarise(num_2_tot = sum(numerical_2),
+                                                num_2_avg = mean(numerical_2),
+                                                num_2_min = min(numerical_2),
+                                                num_2_max = max(numerical_2))
+numerical <- left_join(num.1, num.2, by = "card_id")
+rm(num.1, num.2); gc()
+
+#
+mer.num.1 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_num_1_tot = sum(numerical_1),
+                                              mer_num_1_avg = mean(numerical_1),
+                                              mer_num_1_min = min(numerical_1),
+                                              mer_num_1_max = max(numerical_1)) %>% 
+  group_by(card_id) %>% summarise(mer_num_1_tot = mer_num_1_tot[which.max(n)],
+                                  mer_num_1_avg = mer_num_1_avg[which.max(n)],
+                                  mer_num_1_min = mer_num_1_min[which.max(n)],
+                                  mer_num_1_max = mer_num_1_max[which.max(n)])
+#
+mer.num.2 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_num_2_tot = sum(numerical_2),
+                                              mer_num_2_avg = mean(numerical_2),
+                                              mer_num_2_min = min(numerical_2),
+                                              mer_num_2_max = max(numerical_2)) %>% 
+  group_by(card_id) %>% summarise(mer_num_2_tot = mer_num_2_tot[which.max(n)],
+                                  mer_num_2_avg = mer_num_2_avg[which.max(n)],
+                                  mer_num_2_min = mer_num_2_min[which.max(n)],
+                                  mer_num_2_max = mer_num_2_max[which.max(n)])
+# 
+mer.numerical <- left_join(mer.num.1, mer.num.2, by = "card_id")
+rm(mer.num.1, mer.num.2); gc()
+
+#
+
+numerical <- left_join(numerical, mer.numerical, by = "card_id")
+rm(mer.numerical); gc()
+
+# ------------
+# most_recent_
+# ------------
+sale.range <- dt %>% group_by(card_id) %>% 
+  summarise(sale_range_A = sum(most_recent_sales_range == "A"),
+            sale_range_B = sum(most_recent_sales_range == "B"),
+            sale_range_C = sum(most_recent_sales_range == "C"),
+            sale_range_D = sum(most_recent_sales_range == "D"),
+            sale_range_E = sum(most_recent_sales_range == "E"),
+            sale_range_A_ratio = mean(most_recent_sales_range == "A"),
+            sale_range_B_ratio = mean(most_recent_sales_range == "B"),
+            sale_range_C_ratio = mean(most_recent_sales_range == "C"),
+            sale_range_D_ratio = mean(most_recent_sales_range == "D"))
+
+purchase.range <- dt %>% group_by(card_id) %>% 
+  summarise(purchase_range_A = sum(most_recent_purchases_range == "A"),
+            purchase_range_B = sum(most_recent_purchases_range == "B"),
+            purchase_range_C = sum(most_recent_purchases_range == "C"),
+            purchase_range_D = sum(most_recent_purchases_range == "D"),
+            purchase_range_E = sum(most_recent_purchases_range == "E"),
+            purchase_range_A_ratio = mean(most_recent_purchases_range == "A"),
+            purchase_range_B_ratio = mean(most_recent_purchases_range == "B"),
+            purchase_range_C_ratio = mean(most_recent_purchases_range == "C"),
+            purchase_range_D_ratio = mean(most_recent_purchases_range == "D"))
+
+range <- left_join(sale.range, purchase.range, by = "card_id")
+rm(sale.range, purchase.range); gc()
+
+# --------
+# sale lag
+# --------
+sale.lag.3 <- dt %>% group_by(card_id) %>% summarise(sale_lag_3_tot = sum(avg_sales_lag3),
+                                                     sale_lag_3_avg = mean(avg_sales_lag3),
+                                                     sale_lag_3_min = min(avg_sales_lag3),
+                                                     sale_lag_3_max = max(avg_sales_lag3))
+sale.lag.6 <- dt %>% group_by(card_id) %>% summarise(sale_lag_6_tot = sum(avg_sales_lag6),
+                                                     sale_lag_6_avg = mean(avg_sales_lag6),
+                                                     sale_lag_6_min = min(avg_sales_lag6),
+                                                     sale_lag_6_max = max(avg_sales_lag6))
+sale.lag.12 <- dt %>% group_by(card_id) %>% summarise(sale_lag_12_tot = sum(avg_sales_lag12),
+                                                     sale_lag_12_avg = mean(avg_sales_lag12),
+                                                     sale_lag_12_min = min(avg_sales_lag12),
+                                                     sale_lag_12_max = max(avg_sales_lag12))
+sale.lag <- left_join(sale.lag.3, sale.lag.6, by = "card_id")
+sale.lag <- left_join(sale.lag, sale.lag.12, by = "card_id")
+rm(sale.lag.3, sale.lag.6, sale.lag.12); gc()
+
+#
+mer.sale.lag.3 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_sale_lag_3_tot = sum(avg_sales_lag3),
+                                              mer_sale_lag_3_avg = mean(avg_sales_lag3),
+                                              mer_sale_lag_3_min = min(avg_sales_lag3),
+                                              mer_sale_lag_3_max = max(avg_sales_lag3)) %>% 
+  group_by(card_id) %>% summarise(mer_sale_lag_3_tot = mer_sale_lag_3_tot[which.max(n)],
+                                  mer_sale_lag_3_avg = mer_sale_lag_3_avg[which.max(n)],
+                                  mer_sale_lag_3_min = mer_sale_lag_3_min[which.max(n)],
+                                  mer_sale_lag_3_max = mer_sale_lag_3_max[which.max(n)])
+
+#
+mer.sale.lag.6 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_sale_lag_6_tot = sum(avg_sales_lag3),
+                                              mer_sale_lag_6_avg = mean(avg_sales_lag3),
+                                              mer_sale_lag_6_min = min(avg_sales_lag3),
+                                              mer_sale_lag_6_max = max(avg_sales_lag3)) %>% 
+  group_by(card_id) %>% summarise(mer_sale_lag_6_tot = mer_sale_lag_6_tot[which.max(n)],
+                                  mer_sale_lag_6_avg = mer_sale_lag_6_avg[which.max(n)],
+                                  mer_sale_lag_6_min = mer_sale_lag_6_min[which.max(n)],
+                                  mer_sale_lag_6_max = mer_sale_lag_6_max[which.max(n)])
+
+#
+mer.sale.lag.12 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_sale_lag_12_tot = sum(avg_sales_lag3),
+                                              mer_sale_lag_12_avg = mean(avg_sales_lag3),
+                                              mer_sale_lag_12_min = min(avg_sales_lag3),
+                                              mer_sale_lag_12_max = max(avg_sales_lag3)) %>% 
+  group_by(card_id) %>% summarise(mer_sale_lag_12_tot = mer_sale_lag_12_tot[which.max(n)],
+                                  mer_sale_lag_12_avg = mer_sale_lag_12_avg[which.max(n)],
+                                  mer_sale_lag_12_min = mer_sale_lag_12_min[which.max(n)],
+                                  mer_sale_lag_12_max = mer_sale_lag_12_max[which.max(n)])
+#
+mer.sale.lag <- left_join(mer.sale.lag.3, mer.sale.lag.6, by = "card_id")
+mer.sale.lag <- left_join(mer.sale.lag, mer.sale.lag.12, by = "card_id")
+rm(mer.sale.lag.3, mer.sale.lag.6, mer.sale.lag.12); gc()
+
+#
+sale.lag <- left_join(sale.lag, mer.sale.lag, by = "card_id")
+rm(mer.sale.lag); gc()
+
+# ------------
+# purchase lag
+# ------------
+pur.lag.3 <- dt %>% group_by(card_id) %>% summarise(pur_lag_3_tot = sum(avg_purchases_lag3),
+                                                    pur_lag_3_avg = mean(avg_purchases_lag3),
+                                                    pur_lag_3_min = min(avg_purchases_lag3),
+                                                    pur_lag_3_max = max(avg_purchases_lag3))
+pur.lag.6 <- dt %>% group_by(card_id) %>% summarise(pur_lag_6_tot = sum(avg_purchases_lag6),
+                                                    pur_lag_6_avg = mean(avg_purchases_lag6),
+                                                    pur_lag_6_min = min(avg_purchases_lag6),
+                                                    pur_lag_6_max = max(avg_purchases_lag6))
+pur.lag.12 <- dt %>% group_by(card_id) %>% summarise(pur_lag_12_tot = sum(avg_purchases_lag12),
+                                                    pur_lag_12_avg = mean(avg_purchases_lag12),
+                                                    pur_lag_12_min = min(avg_purchases_lag12),
+                                                    pur_lag_12_max = max(avg_purchases_lag12))
+pur.lag <- left_join(pur.lag.3, pur.lag.6, by = "card_id")
+pur.lag <- left_join(pur.lag, pur.lag.12, by = "card_id")
+rm(pur.lag.3, pur.lag.6, pur.lag.12); gc()
+
+#
+mer.pur.lag.3 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_pur_lag_3_tot = sum(avg_purchases_lag3),
+                                              mer_pur_lag_3_avg = mean(avg_purchases_lag3),
+                                              mer_pur_lag_3_min = min(avg_purchases_lag3),
+                                              mer_pur_lag_3_max = max(avg_purchases_lag3)) %>% 
+  group_by(card_id) %>% summarise(mer_pur_lag_3_tot = mer_pur_lag_3_tot[which.max(n)],
+                                  mer_pur_lag_3_avg = mer_pur_lag_3_avg[which.max(n)],
+                                  mer_pur_lag_3_min = mer_pur_lag_3_min[which.max(n)],
+                                  mer_pur_lag_3_max = mer_pur_lag_3_max[which.max(n)])
+
+#
+mer.pur.lag.6 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_pur_lag_6_tot = sum(avg_purchases_lag6),
+                                              mer_pur_lag_6_avg = mean(avg_purchases_lag6),
+                                              mer_pur_lag_6_min = min(avg_purchases_lag6),
+                                              mer_pur_lag_6_max = max(avg_purchases_lag6)) %>% 
+  group_by(card_id) %>% summarise(mer_pur_lag_6_tot = mer_pur_lag_6_tot[which.max(n)],
+                                  mer_pur_lag_6_avg = mer_pur_lag_6_avg[which.max(n)],
+                                  mer_pur_lag_6_min = mer_pur_lag_6_min[which.max(n)],
+                                  mer_pur_lag_6_max = mer_pur_lag_6_max[which.max(n)])
+
+#
+mer.pur.lag.12 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_pur_lag_12_tot = sum(avg_purchases_lag12),
+                                              mer_pur_lag_12_avg = mean(avg_purchases_lag12),
+                                              mer_pur_lag_12_min = min(avg_purchases_lag12),
+                                              mer_pur_lag_12_max = max(avg_purchases_lag12)) %>% 
+  group_by(card_id) %>% summarise(mer_pur_lag_12_tot = mer_pur_lag_12_tot[which.max(n)],
+                                  mer_pur_lag_12_avg = mer_pur_lag_12_avg[which.max(n)],
+                                  mer_pur_lag_12_min = mer_pur_lag_12_min[which.max(n)],
+                                  mer_pur_lag_12_max = mer_pur_lag_12_max[which.max(n)])
+#
+mer.pur.lag <- left_join(mer.pur.lag.3, mer.pur.lag.6, by = "card_id")
+mer.pur.lag <- left_join(mer.pur.lag, mer.pur.lag.12, by = "card_id")
+rm(mer.pur.lag.3, mer.pur.lag.6, mer.pur.lag.12); gc()
+
+#
+pur.lag <- left_join(pur.lag, mer.pur.lag, by = "card_id")
+rm(mer.pur.lag); gc()
+
+# ----------------
+# active month lag
+# ----------------
+actMonth.lag.3 <- dt %>% group_by(card_id) %>% summarise(actMonth_lag_3_tot = sum(active_months_lag3),
+                                                         actMonth_lag_3_avg = mean(active_months_lag3),
+                                                         actMonth_lag_3_min = min(active_months_lag3),
+                                                         actMonth_lag_3_max = max(active_months_lag3))
+actMonth.lag.6 <- dt %>% group_by(card_id) %>% summarise(actMonth_lag_6_tot = sum(active_months_lag6),
+                                                         actMonth_lag_6_avg = mean(active_months_lag6),
+                                                         actMonth_lag_6_min = min(active_months_lag6),
+                                                         actMonth_lag_6_max = max(active_months_lag6))
+actMonth.lag.12 <- dt %>% group_by(card_id) %>% summarise(actMonth_lag_12_tot = sum(active_months_lag12),
+                                                         actMonth_lag_12_avg = mean(active_months_lag12),
+                                                         actMonth_lag_12_min = min(active_months_lag12),
+                                                         actMonth_lag_12_max = max(active_months_lag12))
+actMonth.lag <- left_join(actMonth.lag.3, actMonth.lag.6, by = "card_id")
+actMonth.lag <- left_join(actMonth.lag, actMonth.lag.12, by = "card_id")
+rm(actMonth.lag.3, actMonth.lag.6, actMonth.lag.12); gc()
+
+#
+mer.actMonth.lag.3 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_actMonth_lag_3_tot = sum(active_months_lag3),
+                                              mer_actMonth_lag_3_avg = mean(active_months_lag3),
+                                              mer_actMonth_lag_3_min = min(active_months_lag3),
+                                              mer_actMonth_lag_3_max = max(active_months_lag3)) %>% 
+  group_by(card_id) %>% summarise(mer_actMonth_lag_3_tot = mer_actMonth_lag_3_tot[which.max(n)],
+                                  mer_actMonth_lag_3_avg = mer_actMonth_lag_3_avg[which.max(n)],
+                                  mer_actMonth_lag_3_min = mer_actMonth_lag_3_min[which.max(n)],
+                                  mer_actMonth_lag_3_max = mer_actMonth_lag_3_max[which.max(n)])
+#
+mer.actMonth.lag.6 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_actMonth_lag_6_tot = sum(active_months_lag6),
+                                              mer_actMonth_lag_6_avg = mean(active_months_lag6),
+                                              mer_actMonth_lag_6_min = min(active_months_lag6),
+                                              mer_actMonth_lag_6_max = max(active_months_lag6)) %>% 
+  group_by(card_id) %>% summarise(mer_actMonth_lag_6_tot = mer_actMonth_lag_6_tot[which.max(n)],
+                                  mer_actMonth_lag_6_avg = mer_actMonth_lag_6_avg[which.max(n)],
+                                  mer_actMonth_lag_6_min = mer_actMonth_lag_6_min[which.max(n)],
+                                  mer_actMonth_lag_6_max = mer_actMonth_lag_6_max[which.max(n)])
+#
+mer.actMonth.lag.12 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_actMonth_lag_12_tot = sum(active_months_lag12),
+                                              mer_actMonth_lag_12_avg = mean(active_months_lag12),
+                                              mer_actMonth_lag_12_min = min(active_months_lag12),
+                                              mer_actMonth_lag_12_max = max(active_months_lag12)) %>% 
+  group_by(card_id) %>% summarise(mer_actMonth_lag_12_tot = mer_actMonth_lag_12_tot[which.max(n)],
+                                  mer_actMonth_lag_12_avg = mer_actMonth_lag_12_avg[which.max(n)],
+                                  mer_actMonth_lag_12_min = mer_actMonth_lag_12_min[which.max(n)],
+                                  mer_actMonth_lag_12_max = mer_actMonth_lag_12_max[which.max(n)])
+#
+mer.actMonth.lag <- left_join(mer.actMonth.lag.3, mer.actMonth.lag.6, by = "card_id")
+mer.actMonth.lag <- left_join(mer.actMonth.lag, mer.actMonth.lag.12, by = "card_id")
+rm(mer.actMonth.lag.3, mer.actMonth.lag.6, mer.actMonth.lag.12); gc()
+
+#
+actMonth.lag <- left_join(actMonth.lag, mer.actMonth.lag, by = "card_id")
+rm(mer.actMonth.lag); gc()
 
 # --------------
 # target
@@ -74,6 +341,7 @@ category.2 <- dt %>% group_by(card_id) %>% summarise(category_2_0_tot = sum(cate
                                                      category_2_2_ratio = mean(category_2 == 2),
                                                      category_2_3_ratio = mean(category_2 == 3),
                                                      category_2_4_ratio = mean(category_2 == 4))
+
 # ----------
 # category_3
 # ----------
@@ -88,11 +356,18 @@ category.3 <- dt %>% group_by(card_id) %>% summarise(category_3_1_tot = sum(cate
                                                      category_3_1_rate = mean(category_3 == 1),
                                                      category_3_2_rate = mean(category_3 == 2),
                                                      category_3_3_rate = mean(category_3 == 3))
+# ----------
+# category_4
+# ----------
+category.4 <- dt %>% group_by(card_id) %>% summarise(category_4_yes_tot = sum(category_4 == "Y"),
+                                                     category_4_no_tot = sum(category_4 == "N"),
+                                                     category_4_yes_ratio = mean(category_4 == "Y"))
 
+#
 category <- left_join(category.1, category.2, by = "card_id")
 category <- left_join(category, category.3, by = "card_id")
-rm(category.1, category.2, category.3)
-gc()
+category <- left_join(category, category.4, by = "card_id")
+rm(category.1, category.2, category.3, category.4); gc()
 
 # ---------------
 # purchase_amount
@@ -120,8 +395,7 @@ spend.reject <- dt %>% filter(authorized_flag == "N") %>% group_by(card_id) %>%
 
 spend <- full_join(spend.approve, spend.reject, by = "card_id")
 spend[is.na(spend)] <- 0
-rm(spend.approve, spend.reject)
-gc()
+rm(spend.approve, spend.reject); gc()
 
 # year
 spend.year <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_year) %>%
@@ -146,8 +420,7 @@ spend.year <- left_join(tot, avg, by = "card_id")
 spend.year <- left_join(spend.year, min, by = "card_id")
 spend.year <- left_join(spend.year, max, by = "card_id")
 spend.year[is.na(spend.year)] <- 0
-rm(tot,avg,min,max)
-gc()
+rm(tot,avg,min,max); gc()
 
 # month
 spend.month <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_month) %>%
@@ -173,8 +446,7 @@ spend.month <- left_join(spend.month, spend.month.min, by = "card_id")
 spend.month <- left_join(spend.month, spend.month.max, by = "card_id")
 spend.month[is.na(spend.month)] <- 0
 
-rm(spend.month.avg, spend.month.max, spend.month.min, spend.month.tot)
-gc()
+rm(spend.month.avg, spend.month.max, spend.month.min, spend.month.tot); gc()
 
 # weekday
 spend.week <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_week) %>%
@@ -199,8 +471,7 @@ spend.week <- left_join(tot, avg, by = "card_id")
 spend.week <- left_join(spend.week, min, by = "card_id")
 spend.week <- left_join(spend.week, max, by = "card_id")
 spend.week[is.na(spend.week)] <- 0
-rm(tot,avg,min,max)
-gc()
+rm(tot,avg,min,max); gc()
 
 # daytime
 spend.morning <- dt %>% filter(authorized_flag == "Y") %>% filter(purchase_morning == 1) %>%
@@ -235,8 +506,7 @@ spend.dayTime <- left_join(spend.dayTime, spend.night, by = "card_id")
 spend.dayTime <- left_join(spend.dayTime, spend.lateNight, by = "card_id")
 spend.dayTime[is.na(spend.dayTime)] <- 0
 
-rm(spend.morning, spend.afternoon, spend.night, spend.lateNight)
-gc()
+rm(spend.morning, spend.afternoon, spend.night, spend.lateNight); gc()
 
 # join spend
 spend <- left_join(spend, spend.year, by = "card_id")
@@ -244,8 +514,7 @@ spend <- left_join(spend, spend.month, by = "card_id")
 spend <- left_join(spend, spend.week, by = "card_id")
 spend <- left_join(spend, spend.dayTime, by = "card_id")
 
-rm(spend.year, spend.month, spend.week, spend.dayTime)
-gc()
+rm(spend.year, spend.month, spend.week, spend.dayTime); gc()
 
 # -------------
 # purchase_date 
@@ -323,16 +592,14 @@ purchase.dayTime <- left_join(purchase.dayTime, purchase.night, by = "card_id")
 purchase.dayTime <- left_join(purchase.dayTime, purchase.lateNight, by = "card_id")
 purchase.dayTime[is.na(purchase.dayTime)] <- 0
 
-rm(purchase.morning, purchase.afternoon, purchase.night, purchase.lateNight)
-gc()
+rm(purchase.morning, purchase.afternoon, purchase.night, purchase.lateNight); gc()
 
 purchase <- left_join(purchase, purchase.year, by = "card_id")
 purchase <- left_join(purchase, purchase.month, by = "card_id")
 purchase <- left_join(purchase, purchase.week, by = "card_id")
 purchase <- left_join(purchase, purchase.dayTime, by = "card_id")
 
-rm(purchase.year, purchase.month, purchase.week, purchase.dayTime)
-gc()
+rm(purchase.year, purchase.month, purchase.week, purchase.dayTime); gc()
 
 # ------------
 # installments
@@ -369,6 +636,11 @@ merchant.cat.max <- dt %>% group_by(card_id,merchant_category_id) %>% summarise(
   group_by(card_id) %>% summarise(merchant_cat_max_visit = max(n), tot = sum(n)) %>%
   mutate(merchant_cat_max_ratio = merchant_cat_max_visit/tot) %>% select(-tot)
 
+#
+merchant <- left_join(merchant, merchant.max, by = "card_id")
+merchant <- left_join(merchant, merchant.cat.max, by = "card_id")
+rm(merchant.max, merchant.cat.max); gc()
+
 # ------------
 # subsector_id
 # ------------
@@ -398,17 +670,21 @@ rm(dt); gc()
 his <- left_join(target, active.date, by = "card_id")
 his <- left_join(his, authorize, by = "card_id")
 his <- left_join(his, category, by = "card_id")
-his <- left_join(his, city.max, by = "card_id")
 his <- left_join(his, feature, by = "card_id")
 his <- left_join(his, installment, by = "card_id")
-his <- left_join(his, merchant, by = "card_id")
-his <- left_join(his, merchant.max, by = "card_id")
-his <- left_join(his, merchant.cat.max, by = "card_id")
 his <- left_join(his, month.lag, by = "card_id")
-his <- left_join(his, purchase, by = "card_id")
 his <- left_join(his, spend, by = "card_id")
+his <- left_join(his, actMonth.lag, by = "card_id")
+his <- left_join(his, pur.lag, by = "card_id")
+his <- left_join(his, sale.lag, by = "card_id")
+his <- left_join(his, range, by = "card_id")
+his <- left_join(his, numerical, by = "card_id")
+
+his <- left_join(his, merchant, by = "card_id")
+his <- left_join(his, purchase, by = "card_id")
 his <- left_join(his, state.max, by = "card_id")
 his <- left_join(his, subsector.max, by = "card_id")
+his <- left_join(his, city.max, by = "card_id")
 
 names(his) <- paste("his_", names(his), sep = "")
 his <- rename(his, target = his_target, 
@@ -422,11 +698,24 @@ rm(list = setdiff(ls(), c("his","new"))); gc()
 # new merchant
 ##################################################################################### 
 ##################################################################################### 
+# ---------
 # prep data
+# ---------
 dt <- read.csv("Elo/train.csv", stringsAsFactors = F)
 new.tran <- read.csv("Elo/new_merchant_transactions.csv", stringsAsFactors = F)
 dt <- inner_join(dt, new.tran, by = "card_id")
 rm(new.tran); gc()
+
+#
+m <- read.csv("Elo/merchants.csv", stringsAsFactors = F)
+m <- select(m, -c(city_id,category_1,merchant_category_id,category_2,state_id,
+                  subsector_id,merchant_group_id))
+m <- unique(m)
+m[is.na(m)] <- 0
+dt <- inner_join(dt, m, by = "merchant_id")
+rm(m); gc()
+
+
 
 # dt <- read.csv("Elo/Sample_Data_New.csv", stringsAsFactors = F)
 # dt$tot_NA <- apply(dt, 1, function(x) sum(is.na(x)))
@@ -437,6 +726,267 @@ rm(new.tran); gc()
 # --------------
 dt$first_active_month <- ymd(paste(dt$first_active_month, "-01", sep = ""))
 dt$purchase_date <- ymd_hms(dt$purchase_date)
+
+# ------------------------
+# numerical_1, numerical_2
+# ------------------------
+num.1 <- dt %>% group_by(card_id) %>% summarise(num_1_tot = sum(numerical_1),
+                                                num_1_avg = mean(numerical_1),
+                                                num_1_min = min(numerical_1),
+                                                num_1_max = max(numerical_1))
+num.2 <- dt %>% group_by(card_id) %>% summarise(num_2_tot = sum(numerical_2),
+                                                num_2_avg = mean(numerical_2),
+                                                num_2_min = min(numerical_2),
+                                                num_2_max = max(numerical_2))
+numerical <- left_join(num.1, num.2, by = "card_id")
+rm(num.1, num.2); gc()
+
+#
+mer.num.1 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_num_1_tot = sum(numerical_1),
+                                              mer_num_1_avg = mean(numerical_1),
+                                              mer_num_1_min = min(numerical_1),
+                                              mer_num_1_max = max(numerical_1)) %>% 
+  group_by(card_id) %>% summarise(mer_num_1_tot = mer_num_1_tot[which.max(n)],
+                                  mer_num_1_avg = mer_num_1_avg[which.max(n)],
+                                  mer_num_1_min = mer_num_1_min[which.max(n)],
+                                  mer_num_1_max = mer_num_1_max[which.max(n)])
+#
+mer.num.2 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_num_2_tot = sum(numerical_2),
+                                              mer_num_2_avg = mean(numerical_2),
+                                              mer_num_2_min = min(numerical_2),
+                                              mer_num_2_max = max(numerical_2)) %>% 
+  group_by(card_id) %>% summarise(mer_num_2_tot = mer_num_2_tot[which.max(n)],
+                                  mer_num_2_avg = mer_num_2_avg[which.max(n)],
+                                  mer_num_2_min = mer_num_2_min[which.max(n)],
+                                  mer_num_2_max = mer_num_2_max[which.max(n)])
+# 
+mer.numerical <- left_join(mer.num.1, mer.num.2, by = "card_id")
+rm(mer.num.1, mer.num.2); gc()
+
+#
+
+numerical <- left_join(numerical, mer.numerical, by = "card_id")
+rm(mer.numerical); gc()
+
+# ------------
+# most_recent_
+# ------------
+sale.range <- dt %>% group_by(card_id) %>% 
+  summarise(sale_range_A = sum(most_recent_sales_range == "A"),
+            sale_range_B = sum(most_recent_sales_range == "B"),
+            sale_range_C = sum(most_recent_sales_range == "C"),
+            sale_range_D = sum(most_recent_sales_range == "D"),
+            sale_range_E = sum(most_recent_sales_range == "E"),
+            sale_range_A_ratio = mean(most_recent_sales_range == "A"),
+            sale_range_B_ratio = mean(most_recent_sales_range == "B"),
+            sale_range_C_ratio = mean(most_recent_sales_range == "C"),
+            sale_range_D_ratio = mean(most_recent_sales_range == "D"))
+
+purchase.range <- dt %>% group_by(card_id) %>% 
+  summarise(purchase_range_A = sum(most_recent_purchases_range == "A"),
+            purchase_range_B = sum(most_recent_purchases_range == "B"),
+            purchase_range_C = sum(most_recent_purchases_range == "C"),
+            purchase_range_D = sum(most_recent_purchases_range == "D"),
+            purchase_range_E = sum(most_recent_purchases_range == "E"),
+            purchase_range_A_ratio = mean(most_recent_purchases_range == "A"),
+            purchase_range_B_ratio = mean(most_recent_purchases_range == "B"),
+            purchase_range_C_ratio = mean(most_recent_purchases_range == "C"),
+            purchase_range_D_ratio = mean(most_recent_purchases_range == "D"))
+
+range <- left_join(sale.range, purchase.range, by = "card_id")
+rm(sale.range, purchase.range); gc()
+
+# --------
+# sale lag
+# --------
+sale.lag.3 <- dt %>% group_by(card_id) %>% summarise(sale_lag_3_tot = sum(avg_sales_lag3),
+                                                     sale_lag_3_avg = mean(avg_sales_lag3),
+                                                     sale_lag_3_min = min(avg_sales_lag3),
+                                                     sale_lag_3_max = max(avg_sales_lag3))
+sale.lag.6 <- dt %>% group_by(card_id) %>% summarise(sale_lag_6_tot = sum(avg_sales_lag6),
+                                                     sale_lag_6_avg = mean(avg_sales_lag6),
+                                                     sale_lag_6_min = min(avg_sales_lag6),
+                                                     sale_lag_6_max = max(avg_sales_lag6))
+sale.lag.12 <- dt %>% group_by(card_id) %>% summarise(sale_lag_12_tot = sum(avg_sales_lag12),
+                                                      sale_lag_12_avg = mean(avg_sales_lag12),
+                                                      sale_lag_12_min = min(avg_sales_lag12),
+                                                      sale_lag_12_max = max(avg_sales_lag12))
+sale.lag <- left_join(sale.lag.3, sale.lag.6, by = "card_id")
+sale.lag <- left_join(sale.lag, sale.lag.12, by = "card_id")
+rm(sale.lag.3, sale.lag.6, sale.lag.12); gc()
+
+#
+mer.sale.lag.3 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_sale_lag_3_tot = sum(avg_sales_lag3),
+                                              mer_sale_lag_3_avg = mean(avg_sales_lag3),
+                                              mer_sale_lag_3_min = min(avg_sales_lag3),
+                                              mer_sale_lag_3_max = max(avg_sales_lag3)) %>% 
+  group_by(card_id) %>% summarise(mer_sale_lag_3_tot = mer_sale_lag_3_tot[which.max(n)],
+                                  mer_sale_lag_3_avg = mer_sale_lag_3_avg[which.max(n)],
+                                  mer_sale_lag_3_min = mer_sale_lag_3_min[which.max(n)],
+                                  mer_sale_lag_3_max = mer_sale_lag_3_max[which.max(n)])
+
+#
+mer.sale.lag.6 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_sale_lag_6_tot = sum(avg_sales_lag3),
+                                              mer_sale_lag_6_avg = mean(avg_sales_lag3),
+                                              mer_sale_lag_6_min = min(avg_sales_lag3),
+                                              mer_sale_lag_6_max = max(avg_sales_lag3)) %>% 
+  group_by(card_id) %>% summarise(mer_sale_lag_6_tot = mer_sale_lag_6_tot[which.max(n)],
+                                  mer_sale_lag_6_avg = mer_sale_lag_6_avg[which.max(n)],
+                                  mer_sale_lag_6_min = mer_sale_lag_6_min[which.max(n)],
+                                  mer_sale_lag_6_max = mer_sale_lag_6_max[which.max(n)])
+
+#
+mer.sale.lag.12 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_sale_lag_12_tot = sum(avg_sales_lag3),
+                                              mer_sale_lag_12_avg = mean(avg_sales_lag3),
+                                              mer_sale_lag_12_min = min(avg_sales_lag3),
+                                              mer_sale_lag_12_max = max(avg_sales_lag3)) %>% 
+  group_by(card_id) %>% summarise(mer_sale_lag_12_tot = mer_sale_lag_12_tot[which.max(n)],
+                                  mer_sale_lag_12_avg = mer_sale_lag_12_avg[which.max(n)],
+                                  mer_sale_lag_12_min = mer_sale_lag_12_min[which.max(n)],
+                                  mer_sale_lag_12_max = mer_sale_lag_12_max[which.max(n)])
+#
+mer.sale.lag <- left_join(mer.sale.lag.3, mer.sale.lag.6, by = "card_id")
+mer.sale.lag <- left_join(mer.sale.lag, mer.sale.lag.12, by = "card_id")
+rm(mer.sale.lag.3, mer.sale.lag.6, mer.sale.lag.12); gc()
+
+#
+sale.lag <- left_join(sale.lag, mer.sale.lag, by = "card_id")
+rm(mer.sale.lag); gc()
+
+# ------------
+# purchase lag
+# ------------
+pur.lag.3 <- dt %>% group_by(card_id) %>% summarise(pur_lag_3_tot = sum(avg_purchases_lag3),
+                                                    pur_lag_3_avg = mean(avg_purchases_lag3),
+                                                    pur_lag_3_min = min(avg_purchases_lag3),
+                                                    pur_lag_3_max = max(avg_purchases_lag3))
+pur.lag.6 <- dt %>% group_by(card_id) %>% summarise(pur_lag_6_tot = sum(avg_purchases_lag6),
+                                                    pur_lag_6_avg = mean(avg_purchases_lag6),
+                                                    pur_lag_6_min = min(avg_purchases_lag6),
+                                                    pur_lag_6_max = max(avg_purchases_lag6))
+pur.lag.12 <- dt %>% group_by(card_id) %>% summarise(pur_lag_12_tot = sum(avg_purchases_lag12),
+                                                     pur_lag_12_avg = mean(avg_purchases_lag12),
+                                                     pur_lag_12_min = min(avg_purchases_lag12),
+                                                     pur_lag_12_max = max(avg_purchases_lag12))
+pur.lag <- left_join(pur.lag.3, pur.lag.6, by = "card_id")
+pur.lag <- left_join(pur.lag, pur.lag.12, by = "card_id")
+rm(pur.lag.3, pur.lag.6, pur.lag.12); gc()
+
+#
+mer.pur.lag.3 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_pur_lag_3_tot = sum(avg_purchases_lag3),
+                                              mer_pur_lag_3_avg = mean(avg_purchases_lag3),
+                                              mer_pur_lag_3_min = min(avg_purchases_lag3),
+                                              mer_pur_lag_3_max = max(avg_purchases_lag3)) %>% 
+  group_by(card_id) %>% summarise(mer_pur_lag_3_tot = mer_pur_lag_3_tot[which.max(n)],
+                                  mer_pur_lag_3_avg = mer_pur_lag_3_avg[which.max(n)],
+                                  mer_pur_lag_3_min = mer_pur_lag_3_min[which.max(n)],
+                                  mer_pur_lag_3_max = mer_pur_lag_3_max[which.max(n)])
+
+#
+mer.pur.lag.6 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_pur_lag_6_tot = sum(avg_purchases_lag6),
+                                              mer_pur_lag_6_avg = mean(avg_purchases_lag6),
+                                              mer_pur_lag_6_min = min(avg_purchases_lag6),
+                                              mer_pur_lag_6_max = max(avg_purchases_lag6)) %>% 
+  group_by(card_id) %>% summarise(mer_pur_lag_6_tot = mer_pur_lag_6_tot[which.max(n)],
+                                  mer_pur_lag_6_avg = mer_pur_lag_6_avg[which.max(n)],
+                                  mer_pur_lag_6_min = mer_pur_lag_6_min[which.max(n)],
+                                  mer_pur_lag_6_max = mer_pur_lag_6_max[which.max(n)])
+
+#
+mer.pur.lag.12 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_pur_lag_12_tot = sum(avg_purchases_lag12),
+                                              mer_pur_lag_12_avg = mean(avg_purchases_lag12),
+                                              mer_pur_lag_12_min = min(avg_purchases_lag12),
+                                              mer_pur_lag_12_max = max(avg_purchases_lag12)) %>% 
+  group_by(card_id) %>% summarise(mer_pur_lag_12_tot = mer_pur_lag_12_tot[which.max(n)],
+                                  mer_pur_lag_12_avg = mer_pur_lag_12_avg[which.max(n)],
+                                  mer_pur_lag_12_min = mer_pur_lag_12_min[which.max(n)],
+                                  mer_pur_lag_12_max = mer_pur_lag_12_max[which.max(n)])
+#
+mer.pur.lag <- left_join(mer.pur.lag.3, mer.pur.lag.6, by = "card_id")
+mer.pur.lag <- left_join(mer.pur.lag, mer.pur.lag.12, by = "card_id")
+rm(mer.pur.lag.3, mer.pur.lag.6, mer.pur.lag.12); gc()
+
+#
+pur.lag <- left_join(pur.lag, mer.pur.lag, by = "card_id")
+rm(mer.pur.lag); gc()
+
+# ----------------
+# active month lag
+# ----------------
+actMonth.lag.3 <- dt %>% group_by(card_id) %>% summarise(actMonth_lag_3_tot = sum(active_months_lag3),
+                                                         actMonth_lag_3_avg = mean(active_months_lag3),
+                                                         actMonth_lag_3_min = min(active_months_lag3),
+                                                         actMonth_lag_3_max = max(active_months_lag3))
+actMonth.lag.6 <- dt %>% group_by(card_id) %>% summarise(actMonth_lag_6_tot = sum(active_months_lag6),
+                                                         actMonth_lag_6_avg = mean(active_months_lag6),
+                                                         actMonth_lag_6_min = min(active_months_lag6),
+                                                         actMonth_lag_6_max = max(active_months_lag6))
+actMonth.lag.12 <- dt %>% group_by(card_id) %>% summarise(actMonth_lag_12_tot = sum(active_months_lag12),
+                                                          actMonth_lag_12_avg = mean(active_months_lag12),
+                                                          actMonth_lag_12_min = min(active_months_lag12),
+                                                          actMonth_lag_12_max = max(active_months_lag12))
+actMonth.lag <- left_join(actMonth.lag.3, actMonth.lag.6, by = "card_id")
+actMonth.lag <- left_join(actMonth.lag, actMonth.lag.12, by = "card_id")
+rm(actMonth.lag.3, actMonth.lag.6, actMonth.lag.12); gc()
+
+#
+mer.actMonth.lag.3 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_actMonth_lag_3_tot = sum(active_months_lag3),
+                                              mer_actMonth_lag_3_avg = mean(active_months_lag3),
+                                              mer_actMonth_lag_3_min = min(active_months_lag3),
+                                              mer_actMonth_lag_3_max = max(active_months_lag3)) %>% 
+  group_by(card_id) %>% summarise(mer_actMonth_lag_3_tot = mer_actMonth_lag_3_tot[which.max(n)],
+                                  mer_actMonth_lag_3_avg = mer_actMonth_lag_3_avg[which.max(n)],
+                                  mer_actMonth_lag_3_min = mer_actMonth_lag_3_min[which.max(n)],
+                                  mer_actMonth_lag_3_max = mer_actMonth_lag_3_max[which.max(n)])
+#
+mer.actMonth.lag.6 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_actMonth_lag_6_tot = sum(active_months_lag6),
+                                              mer_actMonth_lag_6_avg = mean(active_months_lag6),
+                                              mer_actMonth_lag_6_min = min(active_months_lag6),
+                                              mer_actMonth_lag_6_max = max(active_months_lag6)) %>% 
+  group_by(card_id) %>% summarise(mer_actMonth_lag_6_tot = mer_actMonth_lag_6_tot[which.max(n)],
+                                  mer_actMonth_lag_6_avg = mer_actMonth_lag_6_avg[which.max(n)],
+                                  mer_actMonth_lag_6_min = mer_actMonth_lag_6_min[which.max(n)],
+                                  mer_actMonth_lag_6_max = mer_actMonth_lag_6_max[which.max(n)])
+#
+mer.actMonth.lag.12 <- dt %>% 
+  group_by(card_id,merchant_id) %>% summarise(n = n(), 
+                                              mer_actMonth_lag_12_tot = sum(active_months_lag12),
+                                              mer_actMonth_lag_12_avg = mean(active_months_lag12),
+                                              mer_actMonth_lag_12_min = min(active_months_lag12),
+                                              mer_actMonth_lag_12_max = max(active_months_lag12)) %>% 
+  group_by(card_id) %>% summarise(mer_actMonth_lag_12_tot = mer_actMonth_lag_12_tot[which.max(n)],
+                                  mer_actMonth_lag_12_avg = mer_actMonth_lag_12_avg[which.max(n)],
+                                  mer_actMonth_lag_12_min = mer_actMonth_lag_12_min[which.max(n)],
+                                  mer_actMonth_lag_12_max = mer_actMonth_lag_12_max[which.max(n)])
+#
+mer.actMonth.lag <- left_join(mer.actMonth.lag.3, mer.actMonth.lag.6, by = "card_id")
+mer.actMonth.lag <- left_join(mer.actMonth.lag, mer.actMonth.lag.12, by = "card_id")
+rm(mer.actMonth.lag.3, mer.actMonth.lag.6, mer.actMonth.lag.12); gc()
+
+#
+actMonth.lag <- left_join(actMonth.lag, mer.actMonth.lag, by = "card_id")
+rm(mer.actMonth.lag); gc()
+
 
 # -----------
 # active date
@@ -494,10 +1044,18 @@ category.3 <- dt %>% group_by(card_id) %>% summarise(category_3_1_tot = sum(cate
                                                      category_3_1_rate = mean(category_3 == 1),
                                                      category_3_2_rate = mean(category_3 == 2),
                                                      category_3_3_rate = mean(category_3 == 3))
+# ----------
+# category_4
+# ----------
+category.4 <- dt %>% group_by(card_id) %>% summarise(category_4_yes_tot = sum(category_4 == "Y"),
+                                                     category_4_no_tot = sum(category_4 == "N"),
+                                                     category_4_yes_ratio = mean(category_4 == "Y"))
+
+#
 category <- left_join(category.1, category.2, by = "card_id")
 category <- left_join(category, category.3, by = "card_id")
-rm(category.1, category.2, category.3)
-gc()
+category <- left_join(category, category.4, by = "card_id")
+rm(category.1, category.2, category.3, category.4); gc()
 
 # ---------------
 # purchase_amount
@@ -526,8 +1084,7 @@ spend.reject <- dt %>% filter(authorized_flag == "N") %>% group_by(card_id) %>%
 
 spend <- full_join(spend.approve, spend.reject, by = "card_id")
 spend[is.na(spend)] <- 0
-rm(spend.approve, spend.reject)
-gc()
+rm(spend.approve, spend.reject); gc()
 
 # year
 spend.year <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_year) %>%
@@ -552,8 +1109,7 @@ spend.year <- left_join(tot, avg, by = "card_id")
 spend.year <- left_join(spend.year, min, by = "card_id")
 spend.year <- left_join(spend.year, max, by = "card_id")
 spend.year[is.na(spend.year)] <- 0
-rm(tot,avg,min,max)
-gc()
+rm(tot,avg,min,max); gc()
 
 # month
 spend.month <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_month) %>%
@@ -579,8 +1135,7 @@ spend.month <- left_join(spend.month, spend.month.min, by = "card_id")
 spend.month <- left_join(spend.month, spend.month.max, by = "card_id")
 spend.month[is.na(spend.month)] <- 0
 
-rm(spend.month.avg, spend.month.max, spend.month.min, spend.month.tot)
-gc()
+rm(spend.month.avg, spend.month.max, spend.month.min, spend.month.tot); gc()
 
 # weekday
 spend.week <- dt %>% filter(authorized_flag == "Y") %>% group_by(card_id,purchase_week) %>%
@@ -605,8 +1160,7 @@ spend.week <- left_join(tot, avg, by = "card_id")
 spend.week <- left_join(spend.week, min, by = "card_id")
 spend.week <- left_join(spend.week, max, by = "card_id")
 spend.week[is.na(spend.week)] <- 0
-rm(tot,avg,min,max)
-gc()
+rm(tot,avg,min,max); gc()
 
 # daytime
 spend.morning <- dt %>% filter(authorized_flag == "Y") %>% filter(purchase_morning == 1) %>%
@@ -641,8 +1195,7 @@ spend.dayTime <- left_join(spend.dayTime, spend.night, by = "card_id")
 spend.dayTime <- left_join(spend.dayTime, spend.lateNight, by = "card_id")
 spend.dayTime[is.na(spend.dayTime)] <- 0
 
-rm(spend.morning, spend.afternoon, spend.night, spend.lateNight)
-gc()
+rm(spend.morning, spend.afternoon, spend.night, spend.lateNight); gc()
 
 # join spend
 spend <- left_join(spend, spend.year, by = "card_id")
@@ -651,8 +1204,7 @@ spend <- left_join(spend, spend.week, by = "card_id")
 spend <- left_join(spend, spend.dayTime, by = "card_id")
 spend[is.na(spend)] <- 0
 
-rm(spend.year, spend.month, spend.week, spend.dayTime)
-gc()
+rm(spend.year, spend.month, spend.week, spend.dayTime); gc()
 
 # -------------
 # purchase_date
@@ -733,16 +1285,14 @@ purchase.dayTime <- left_join(purchase.dayTime, purchase.night, by = "card_id")
 purchase.dayTime <- left_join(purchase.dayTime, purchase.lateNight, by = "card_id")
 purchase.dayTime[is.na(purchase.dayTime)] <- 0
 
-rm(purchase.morning, purchase.afternoon, purchase.night, purchase.lateNight)
-gc()
+rm(purchase.morning, purchase.afternoon, purchase.night, purchase.lateNight); gc()
 
 purchase <- left_join(purchase, purchase.year, by = "card_id")
 purchase <- left_join(purchase, purchase.month, by = "card_id")
 purchase <- left_join(purchase, purchase.week, by = "card_id")
 purchase <- left_join(purchase, purchase.dayTime, by = "card_id")
 
-rm(purchase.year, purchase.month, purchase.week, purchase.dayTime)
-gc()
+rm(purchase.year, purchase.month, purchase.week, purchase.dayTime); gc()
 
 # ------------
 # installments
@@ -780,6 +1330,11 @@ merchant.cat.max <- dt %>% group_by(card_id,merchant_category_id) %>% summarise(
   group_by(card_id) %>% summarise(merchant_cat_max_visit = max(n), tot = sum(n)) %>%
   mutate(merchant_cat_max_ratio = merchant_cat_max_visit/tot) %>% select(-tot)
 
+#
+merchant <- left_join(merchant, merchant.max, by = "card_id")
+merchant <- left_join(merchant, merchant.cat.max, by = "card_id")
+rm(merchant.max, merchant.cat.max); gc()
+
 # ------------
 # subsector_id
 # ------------
@@ -810,19 +1365,21 @@ new <- left_join(new, city.max, by = "card_id")
 new <- left_join(new, feature, by = "card_id")
 new <- left_join(new, installment, by = "card_id")
 new <- left_join(new, merchant, by = "card_id")
-new <- left_join(new, merchant.max, by = "card_id")
-new <- left_join(new, merchant.cat.max, by = "card_id")
 new <- left_join(new, month.lag, by = "card_id")
 new <- left_join(new, purchase, by = "card_id")
 new <- left_join(new, spend, by = "card_id")
 new <- left_join(new, state.max, by = "card_id")
 new <- left_join(new, subsector.max, by = "card_id")
+new <- left_join(new, sale.lag, by = "card_id")
+new <- left_join(new, pur.lag, by = "card_id")
+new <- left_join(new, actMonth.lag, by = "card_id")
+new <- left_join(new, range, by = "card_id")
+new <- left_join(new, numerical, by = "card_id")
 
 names(new) <- paste("new_", names(new), sep = "")
 new <- rename(new, card_id = new_card_id)
 
-rm(list = setdiff(ls(), c("new","his")))
-gc()
+rm(list = setdiff(ls(), c("new","his"))); gc()
 
 # join his and new
 #####################################################################################
@@ -833,15 +1390,14 @@ final <- final %>% mutate(days_betwn_his_new = as.numeric(abs(difftime(his_last_
   select(-c(active_date,his_first_purchase_date,his_last_purchase_date,
             new_first_purchase_date,new_last_purchase_date))
 final[is.na(final)] <- 0
-rm(his, new)
-gc()
-
+rm(his, new); gc()
+write.csv(final, "Elo/Iteration_2/train_final.csv", row.names = F)
 
 # modeling
 #####################################################################################
 #####################################################################################
 final <- read.csv("Elo/train_final.csv", stringsAsFactors = F)
-train <- sample_frac(final, 0.8)
+train <- sample_frac(final, 0.9)
 test <- anti_join(final, train, by = "card_id")
 
 itrain <- xgb.DMatrix(
@@ -854,13 +1410,11 @@ bst <- xgb.train(data = itrain,
                     booster = "gbtree",
                     objective = "reg:linear",
                     eval_metric = "rmse",
+                    nrounds = 500,
                     max_depth = 7,
-                    eta = 0.01,
+                    eta = 0.1,
                     subsample = 0.8,
                     colsample_bytree = 0.8,
-                    min_child_weight = 10,
-                    alpha = 0,
-                    lambda = 0.1,
                     print_every_n = 10,
                     verbose = 1,
                     early_stopping_rounds = 100)
@@ -874,51 +1428,35 @@ ggplot(result, aes(y)) + geom_density(fill = "lightblue") +
 qplot(result$residual, geom = "density", fill = I("gold"), alpha = 0.7)
 
 # ------------------
-# 
-# ------------------
-
-
-
-
-
-# ------------------
 # variable selection
 # ------------------
 final <- read.csv("Elo/train_final.csv", stringsAsFactors = F)
-train <- sample_frac(final, 0.8)
+train <- sample_frac(final, 0.9)
 test <- anti_join(final, train, by = "card_id")
 rm(final); gc()
 bst <- xgb.load("Elo/bst1")
 imp <- xgb.importance(feature_names = colnames(select(train,select = -c(card_id,target))), model = bst)
-imp.var <- head(imp$Feature, 30)
+imp.var <- head(imp$Feature, 400)
 
 itrain <- xgb.DMatrix(
   data = as.matrix(select(train, imp.var)), label = as.matrix(train$target))
 itest <- xgb.DMatrix(
   data = as.matrix(select(test, imp.var)), label = as.matrix(test$target))
 
-bst <- xgb.train(data = itrain,
-                    watchlist = list(train = itrain, test = itest),
-                    booster = "gbtree",
-                    objective = "reg:linear",
-                    eval_metric = "rmse",
-                    max_depth = 6,
-                    eta = .1,
-                    subsample = 1,
-                    colsample_bytree = 0.8,
-                    num_boost_round = 100,
-                    nrounds = 1000,
-                    print_every_n = 10,
-                    verbose = 1,
-                    early_stopping_rounds = 100)
-
-rm(list = setdiff(ls(), c("iboost","imp.var")))
-gc()
-
-
-
-
-
+bst.1 <- xgb.train(data = itrain,
+                 watchlist = list(train = itrain, test = itest),
+                 booster = "gbtree",
+                 objective = "reg:linear",
+                 eval_metric = "rmse",
+                 nrounds = 500,
+                 max_depth = 7,
+                 eta = 0.1,
+                 subsample = 0.8,
+                 colsample_bytree = 0.8,
+                 print_every_n = 10,
+                 verbose = 1,
+                 early_stopping_rounds = 100)
+xgb.save(bst, "Elo/bst2")
 
 
 
