@@ -9,10 +9,9 @@ library(pROC)
 # model to identify outliers
 # --------------------------
 final <- read.csv("Elo/train_final.csv", stringsAsFactors = F)
-final$outlier <- as.numeric(final$target < -5 | final$target > 5)
-ind <- createDataPartition(final$outlier, p = 0.9, list = F)
-train <- final[ind,]
-test <- final[-ind,]
+final$outlier <- as.numeric(final$target < -10 | final$target > 5)
+train <- sample_frac(final, 0.9)
+test <- anti_join(final, train, by = "card_id")
 
 itrain <- xgb.DMatrix(data = as.matrix(select(train, -c(card_id, target, outlier))),
                       label = as.matrix(train$outlier))
@@ -41,8 +40,240 @@ result <- data.frame(card_id = test$card_id,
 r <- roc(result$y, result$pred)
 coords(r, "best", ret = "threshold", best.method = "closest.topleft")
 
-result$y_hat <- as.numeric(result$pred >= 0.03934946)
+result$y_hat <- as.numeric(result$pred >= 0.04870565)
 confusionMatrix(table(result$y_hat, result$y))
+
+# --------------------------
+# down sampling
+# --------------------------
+outlier <- filter(train, outlier == 1)
+non.outlier <- filter(train, outlier == 0)
+ind <- rep(1:ceiling(nrow(non.outlier)/nrow(outlier)), each = nrow(outlier))
+ind <- ind[1:nrow(non.outlier)]
+ind <- sample(ind)
+
+#
+train.1 <- bind_rows(outlier, non.outlier[ind == 1,])
+itrain.1 <- xgb.DMatrix(data = as.matrix(select(train.1, -c(card_id,target,outlier))),
+                        label = as.matrix(train.1$outlier))
+bst.1 <- xgb.train(data = itrain.1,
+                         booster = "gbtree",
+                         objective = "binary:logistic",
+                         eval_metric = "error",
+                         max_depth = 6,
+                         eta = .1,
+                         subsample = 1,
+                         colsample_bytree = 0.8,
+                         num_boost_round = 100,
+                         nrounds = 500,
+                         print_every_n = 10,
+                         verbose = 1)
+rm(train.1, itrain.1)
+gc()
+
+#
+train.2 <- bind_rows(outlier, non.outlier[ind == 2,])
+itrain.2 <- xgb.DMatrix(data = as.matrix(select(train.2, -c(card_id,target,outlier))),
+                        label = as.matrix(train.2$outlier))
+bst.2 <- xgb.train(data = itrain.2,
+                   booster = "gbtree",
+                   objective = "binary:logistic",
+                   eval_metric = "error",
+                   max_depth = 6,
+                   eta = .1,
+                   subsample = 1,
+                   colsample_bytree = 0.8,
+                   num_boost_round = 100,
+                   nrounds = 500,
+                   print_every_n = 10,
+                   verbose = 1)
+rm(train.2, itrain.2)
+gc()
+
+#
+train.3 <- bind_rows(outlier, non.outlier[ind == 3,])
+itrain.3 <- xgb.DMatrix(data = as.matrix(select(train.3, -c(card_id,target,outlier))),
+                        label = as.matrix(train.3$outlier))
+bst.3 <- xgb.train(data = itrain.3,
+                   booster = "gbtree",
+                   objective = "binary:logistic",
+                   eval_metric = "error",
+                   max_depth = 6,
+                   eta = .1,
+                   subsample = 1,
+                   colsample_bytree = 0.8,
+                   num_boost_round = 100,
+                   nrounds = 500,
+                   print_every_n = 10,
+                   verbose = 1)
+rm(train.3, itrain.3)
+gc()
+
+#
+train.4 <- bind_rows(outlier, non.outlier[ind == 4,])
+itrain.4 <- xgb.DMatrix(data = as.matrix(select(train.4, -c(card_id,target,outlier))),
+                        label = as.matrix(train.4$outlier))
+bst.4 <- xgb.train(data = itrain.4,
+                   booster = "gbtree",
+                   objective = "binary:logistic",
+                   eval_metric = "error",
+                   max_depth = 6,
+                   eta = .1,
+                   subsample = 1,
+                   colsample_bytree = 0.8,
+                   num_boost_round = 100,
+                   nrounds = 500,
+                   print_every_n = 10,
+                   verbose = 1)
+rm(train.4, itrain.4)
+gc()
+
+#
+train.5 <- bind_rows(outlier, non.outlier[ind == 5,])
+itrain.5 <- xgb.DMatrix(data = as.matrix(select(train.5, -c(card_id,target,outlier))),
+                        label = as.matrix(train.5$outlier))
+bst.5 <- xgb.train(data = itrain.5,
+                   booster = "gbtree",
+                   objective = "binary:logistic",
+                   eval_metric = "error",
+                   max_depth = 6,
+                   eta = .1,
+                   subsample = 1,
+                   colsample_bytree = 0.8,
+                   num_boost_round = 100,
+                   nrounds = 500,
+                   print_every_n = 10,
+                   verbose = 1)
+rm(train.5, itrain.5)
+gc()
+
+#
+train.6 <- bind_rows(outlier, non.outlier[ind == 6,])
+itrain.6 <- xgb.DMatrix(data = as.matrix(select(train.6, -c(card_id,target,outlier))),
+                        label = as.matrix(train.6$outlier))
+bst.6 <- xgb.train(data = itrain.6,
+                   booster = "gbtree",
+                   objective = "binary:logistic",
+                   eval_metric = "error",
+                   max_depth = 6,
+                   eta = .1,
+                   subsample = 1,
+                   colsample_bytree = 0.8,
+                   num_boost_round = 100,
+                   nrounds = 500,
+                   print_every_n = 10,
+                   verbose = 1)
+rm(train.6, itrain.6)
+gc()
+
+#
+train.7 <- bind_rows(outlier, non.outlier[ind == 7,])
+itrain.7 <- xgb.DMatrix(data = as.matrix(select(train.7, -c(card_id,target,outlier))),
+                        label = as.matrix(train.7$outlier))
+bst.7 <- xgb.train(data = itrain.7,
+                   booster = "gbtree",
+                   objective = "binary:logistic",
+                   eval_metric = "error",
+                   max_depth = 6,
+                   eta = .1,
+                   subsample = 1,
+                   colsample_bytree = 0.8,
+                   num_boost_round = 100,
+                   nrounds = 500,
+                   print_every_n = 10,
+                   verbose = 1)
+rm(train.7, itrain.7)
+gc()
+
+#
+train.8 <- bind_rows(outlier, non.outlier[ind == 8,])
+itrain.8 <- xgb.DMatrix(data = as.matrix(select(train.8, -c(card_id,target,outlier))),
+                        label = as.matrix(train.8$outlier))
+bst.8 <- xgb.train(data = itrain.8,
+                   booster = "gbtree",
+                   objective = "binary:logistic",
+                   eval_metric = "error",
+                   max_depth = 6,
+                   eta = .1,
+                   subsample = 1,
+                   colsample_bytree = 0.8,
+                   num_boost_round = 100,
+                   nrounds = 500,
+                   print_every_n = 10,
+                   verbose = 1)
+rm(train.8, itrain.8)
+gc()
+
+#
+train.9 <- bind_rows(outlier, non.outlier[ind == 9,])
+itrain.9 <- xgb.DMatrix(data = as.matrix(select(train.9, -c(card_id,target,outlier))),
+                        label = as.matrix(train.9$outlier))
+bst.9 <- xgb.train(data = itrain.9,
+                   booster = "gbtree",
+                   objective = "binary:logistic",
+                   eval_metric = "error",
+                   max_depth = 6,
+                   eta = .1,
+                   subsample = 1,
+                   colsample_bytree = 0.8,
+                   num_boost_round = 100,
+                   nrounds = 500,
+                   print_every_n = 10,
+                   verbose = 1)
+rm(train.9, itrain.9)
+gc()
+
+#
+train.10 <- bind_rows(outlier, non.outlier[ind == 10,])
+itrain.10 <- xgb.DMatrix(data = as.matrix(select(train.10, -c(card_id,target,outlier))),
+                        label = as.matrix(train.10$outlier))
+bst.10 <- xgb.train(data = itrain.10,
+                   booster = "gbtree",
+                   objective = "binary:logistic",
+                   eval_metric = "error",
+                   max_depth = 6,
+                   eta = .1,
+                   subsample = 1,
+                   colsample_bytree = 0.8,
+                   num_boost_round = 100,
+                   nrounds = 500,
+                   print_every_n = 10,
+                   verbose = 1)
+rm(train.10, itrain.10)
+gc()
+
+#
+result <- data.frame(card_id = test$card_id, 
+                     y = test$outlier,
+                     prob_1 = predict(bst.1, itest),
+                     prob_2 = predict(bst.2, itest),
+                     prob_3 = predict(bst.3, itest),
+                     prob_4 = predict(bst.4, itest),
+                     prob_5 = predict(bst.5, itest),
+                     prob_6 = predict(bst.6, itest),
+                     prob_7 = predict(bst.7, itest),
+                     prob_8 = predict(bst.8, itest),
+                     prob_9 = predict(bst.9, itest),
+                     prob_10 = predict(bst.10, itest), stringsAsFactors = F)
+result$prob_avg <- apply(select(result, -c(card_id,y)), 1, mean)
+result$prob_max <- apply(select(result, -c(card_id,y)), 1, max)
+
+r <- roc(result$y, result$prob_avg)
+coords(r, "best", ret = "threshold", best.method = "closest.topleft")
+
+result$y_hat <- ifelse(result$prob_avg < 0.5, 0, 1)
+confusionMatrix(table(result$y_hat, result$y))
+
+xgb.save(bst.1, "Elo/bst_down_1")
+xgb.save(bst.2, "Elo/bst_down_2")
+xgb.save(bst.3, "Elo/bst_down_3")
+xgb.save(bst.4, "Elo/bst_down_4")
+xgb.save(bst.5, "Elo/bst_down_5")
+xgb.save(bst.6, "Elo/bst_down_6")
+xgb.save(bst.7, "Elo/bst_down_7")
+xgb.save(bst.8, "Elo/bst_down_8")
+xgb.save(bst.9, "Elo/bst_down_9")
+xgb.save(bst.10, "Elo/bst_down_10")
 
 
 # --------------------------
@@ -74,5 +305,6 @@ bst <- xgb.train(data = itrain,
                  verbose = 1,
                  early_stopping_rounds = 100)
 xgb.save(bst, "Elo/bst2")
+
 
 
